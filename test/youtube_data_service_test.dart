@@ -45,6 +45,11 @@ void main() {
     expect(sections[0].continuationToken, 'recommended-next');
     expect(sections[1].continuationToken, isNull);
     expect(sections[1].videos.single.id, 'short-1');
+    expect(sections[1].videos.single.itemType, VideoItemType.shorts);
+    expect(
+      sections[1].videos.single.videoUrl,
+      'https://www.youtube.com/shorts/short-1',
+    );
     expect(sections[1].videos.single.title, 'Shorts title');
     expect(sections[1].videos.single.categoryName, 'Shorts');
   });
@@ -71,6 +76,34 @@ void main() {
     expect(sections.single.title, 'More recommendations');
     expect(sections.single.videos.single.id, 'continued-video');
   });
+
+  test(
+    'excludes the known appeal survey renderer without dropping media shelves',
+    () {
+      final sections = service.parseHomeFeedResponse(
+        _homeResponse([
+          {
+            'appealSurveyShelfRenderer': <String, dynamic>{
+              'title': {'simpleText': 'Tell us what you think'},
+            },
+          },
+          _shelf('Recommended', [
+            {
+              'tileRenderer': _tile(
+                videoId: 'recommended-video',
+                title: 'Recommended video',
+                thumbnailUrl: 'https://example.test/recommended.jpg',
+              ),
+            },
+          ]),
+        ]),
+      );
+
+      expect(sections.length, 1);
+      expect(sections.single.title, 'Recommended');
+      expect(sections.single.videos.single.id, 'recommended-video');
+    },
+  );
 
   test('parses a shelf more button as a browse destination', () {
     final section = service
@@ -120,6 +153,97 @@ void main() {
     expect(section.browseTitle, 'Browse all');
   });
 
+  test(
+    'does not promote a refresh-only grid button to global continuation',
+    () {
+      final response = _homeResponse([
+        _shelf('棒球和更多主题', [
+          {
+            'tileRenderer': _tile(
+              videoId: 'baseball-video',
+              title: 'Baseball video',
+              thumbnailUrl: 'https://example.test/baseball.jpg',
+            ),
+          },
+        ]),
+        _shelf(null, [
+          {
+            'gridButtonRenderer': {
+              'title': {
+                'runs': [
+                  {'text': '更多...'},
+                ],
+              },
+              'icon': {'iconType': 'ARROW_CIRCLE'},
+              'navigationEndpoint': {
+                'loadReloadContinuationCommand': {
+                  'continuation': 'global-home-token',
+                },
+              },
+            },
+          },
+        ]),
+      ]);
+      final sections = service.parseHomeFeedResponse(response);
+
+      expect(sections.map((section) => section.title), ['棒球和更多主题']);
+      expect(sections.single.videos.single.id, 'baseball-video');
+      expect(service.extractHomeSectionContinuationToken(response), isNull);
+    },
+  );
+
+  test('loads titled shelves from a global refresh-only continuation', () {
+    final response = {
+      'continuationContents': {
+        'tvSurfaceContentContinuation': {
+          'content': {
+            'sectionListRenderer': {
+              'contents': [
+                _shelf('探索更多主题', [
+                  {
+                    'tileRenderer': _tile(
+                      videoId: 'topic-video',
+                      title: 'Topic video',
+                      thumbnailUrl: 'https://example.test/topic.jpg',
+                    ),
+                  },
+                ]),
+                _shelf(null, [
+                  {
+                    'gridButtonRenderer': {
+                      'title': {'simpleText': '刷新'},
+                      'icon': {'iconType': 'REFRESH'},
+                      'navigationEndpoint': {
+                        'loadReloadContinuationCommand': {
+                          'continuation': 'next-global-home-token',
+                        },
+                      },
+                    },
+                  },
+                ]),
+              ],
+              'continuations': [
+                {
+                  'nextContinuationData': {
+                    'continuation': 'next-global-home-token',
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    final sections = service.parseHomeContinuationResponse(response);
+
+    expect(sections.map((section) => section.title), ['探索更多主题']);
+    expect(sections.single.videos.single.id, 'topic-video');
+    expect(
+      service.extractHomeSectionContinuationToken(response),
+      'next-global-home-token',
+    );
+  });
+
   test('parses browse destination items and page continuation', () {
     final destination = VideoSection(
       title: 'Music',
@@ -160,6 +284,7 @@ void main() {
       videos: [
         Video(
           id: 'music-1',
+          itemType: VideoItemType.video,
           title: 'Music one',
           channelName: '',
           channelAvatar: '',
@@ -213,6 +338,7 @@ void main() {
       videos: [
         Video(
           id: 'existing-video',
+          itemType: VideoItemType.video,
           title: 'Existing video',
           channelName: '',
           channelAvatar: '',
@@ -265,6 +391,153 @@ void main() {
     expect(updated.continuationToken, 'next-token');
   });
 
+  test('appends shelves from both TV section-list continuation envelopes', () {
+    final original = VideoSection(
+      title: 'Recommended',
+      videos: [
+        Video(
+          id: 'existing-video',
+          itemType: VideoItemType.video,
+          title: 'Existing video',
+          channelName: '',
+          channelAvatar: '',
+          views: '',
+          uploadTime: '',
+          duration: '',
+          thumbnailUrl: 'https://example.test/existing.jpg',
+          videoUrl: 'https://www.youtube.com/watch?v=existing-video',
+          categoryId: 'home',
+          categoryName: 'Recommended',
+          description: 'Existing video',
+          likesCount: 0,
+        ),
+      ],
+      continuationToken: 'section-token',
+    );
+    final sectionList = {
+      'contents': [
+        _shelf('Recommended continuation', [
+          {
+            'tileRenderer': _tile(
+              videoId: 'continued-video-1',
+              title: 'Continued video one',
+              thumbnailUrl: 'https://example.test/continued-1.jpg',
+            ),
+          },
+        ]),
+        _shelf('More recommendations', [
+          {
+            'tileRenderer': _tile(
+              videoId: 'continued-video-2',
+              title: 'Continued video two',
+              thumbnailUrl: 'https://example.test/continued-2.jpg',
+            ),
+          },
+        ]),
+      ],
+      'continuations': [
+        {
+          'nextContinuationData': {'continuation': 'next-section-token'},
+        },
+      ],
+    };
+    final envelopes = [
+      {'sectionListContinuation': sectionList},
+      {
+        'tvSurfaceContentContinuation': {
+          'content': {'sectionListRenderer': sectionList},
+        },
+      },
+    ];
+
+    for (final continuationContent in envelopes) {
+      final updated = service.parseHomeSectionContinuationResponse(original, {
+        'continuationContents': continuationContent,
+      });
+
+      expect(updated.videos.map((video) => video.id), [
+        'existing-video',
+        'continued-video-1',
+        'continued-video-2',
+      ]);
+      expect(updated.continuationToken, 'next-section-token');
+    }
+  });
+
+  test('uses grid refresh button as the next section continuation', () {
+    final original = VideoSection(
+      title: 'Recommended',
+      videos: const [],
+      continuationToken: 'section-token',
+    );
+
+    final updated = service.parseHomeSectionContinuationResponse(original, {
+      'continuationContents': {
+        'horizontalListContinuation': {
+          'items': [
+            {
+              'tileRenderer': _tile(
+                videoId: 'continued-video',
+                title: 'Continued video',
+                thumbnailUrl: 'https://example.test/continued.jpg',
+              ),
+            },
+            {
+              'gridButtonRenderer': {
+                'title': {'simpleText': '刷新'},
+                'icon': {'iconType': 'REFRESH'},
+                'navigationEndpoint': {
+                  'clickTrackingParams': 'tracking-value',
+                  'loadReloadContinuationCommand': {
+                    'continuation': 'reload-next-token',
+                  },
+                },
+                'trackingParams': 'button-tracking-value',
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(updated.videos.map((video) => video.id), ['continued-video']);
+    expect(updated.continuationToken, 'reload-next-token');
+  });
+
+  test('surfaces a grid refresh button without a continuation token', () {
+    final original = VideoSection(
+      title: 'Recommended',
+      videos: const [],
+      continuationToken: 'section-token',
+    );
+
+    expect(
+      () => service.parseHomeSectionContinuationResponse(original, {
+        'continuationContents': {
+          'horizontalListContinuation': {
+            'items': [
+              {
+                'gridButtonRenderer': {
+                  'title': {'simpleText': '刷新'},
+                  'navigationEndpoint': {
+                    'loadReloadContinuationCommand': <String, dynamic>{},
+                  },
+                },
+              },
+            ],
+          },
+        },
+      }),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('缺少 continuation'),
+        ),
+      ),
+    );
+  });
+
   test('does not request another page when a section has no token', () async {
     final section = VideoSection(title: 'Complete section', videos: const []);
 
@@ -285,7 +558,7 @@ void main() {
     },
   );
 
-  test('uses section-list tokens, not shelf video-list tokens, for home rows', () {
+  test('uses section-list token, then first shelf continuation for home paging', () {
     final response = _homeResponse([
       _shelf('Recommended', [
         {
@@ -306,7 +579,10 @@ void main() {
           },
         ];
 
-    expect(service.extractHomeSectionContinuationToken(response), isNull);
+    expect(
+      service.extractHomeSectionContinuationToken(response),
+      'video-list-token',
+    );
 
     sectionList['continuations'] = [
       {
@@ -350,6 +626,7 @@ void main() {
               browseId: 'Uw-ETjdGVUk',
               title: 'Browse destination',
               thumbnailUrl: 'https://example.test/browse.jpg',
+              contentType: 'TILE_CONTENT_TYPE_PLAYLIST',
             ),
           },
         ]),
@@ -392,6 +669,7 @@ void main() {
 
     final track = sections.single.videos.single;
     expect(track.id, isNull);
+    expect(track.itemType, VideoItemType.track);
     expect(track.browseId, 'track-browse-id');
     expect(track.title, 'Actual track title');
     expect(track.thumbnailUrl, 'https://example.test/track.jpg');
@@ -416,9 +694,153 @@ void main() {
 
     final playlist = sections.single.videos.single;
     expect(playlist.id, isNull);
+    expect(playlist.itemType, VideoItemType.playlist);
     expect(playlist.browseId, 'playlist-browse-id');
     expect(playlist.title, 'Actual playlist');
     expect(playlist.thumbnailUrl, 'https://example.test/playlist.jpg');
+  });
+
+  test(
+    'classifies VIDEO tiles with playlist browse IDs as playlist entries',
+    () {
+      final item = service
+          .parseHomeFeedResponse(
+            _homeResponse([
+              _shelf('Mixes', [
+                {
+                  'tileRenderer': {
+                    'contentType': 'TILE_CONTENT_TYPE_VIDEO',
+                    'onSelectCommand': {
+                      'browseEndpoint': {
+                        'browseId': 'VLPLbN6m7HQXaYo',
+                        'params': 'playlist-params',
+                      },
+                    },
+                    'metadata': {
+                      'tileMetadataRenderer': {
+                        'title': {'simpleText': 'Original playlist title'},
+                      },
+                    },
+                    'header': {
+                      'tileHeaderRenderer': {
+                        'thumbnail': {
+                          'thumbnails': [
+                            {
+                              'url': 'https://example.test/playlist-tile.jpg',
+                              'width': 640,
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              ]),
+            ]),
+          )
+          .single
+          .videos
+          .single;
+
+      expect(item.itemType, VideoItemType.playlist);
+      expect(item.id, isNull);
+      expect(item.browseId, 'VLPLbN6m7HQXaYo');
+      expect(item.browseParams, 'playlist-params');
+      expect(item.title, 'Original playlist title');
+    },
+  );
+
+  test(
+    'classifies VIDEO tiles with other browse IDs as browse destinations',
+    () {
+      final item = service
+          .parseHomeFeedResponse(
+            _homeResponse([
+              _shelf('Explore', [
+                {
+                  'tileRenderer': {
+                    'contentType': 'TILE_CONTENT_TYPE_VIDEO',
+                    'onSelectCommand': {
+                      'browseEndpoint': {'browseId': 'FEwhat_to_watch'},
+                    },
+                    'metadata': {
+                      'tileMetadataRenderer': {
+                        'title': {'simpleText': 'Explore destination'},
+                      },
+                    },
+                    'header': {
+                      'tileHeaderRenderer': {
+                        'thumbnail': {
+                          'thumbnails': [
+                            {
+                              'url': 'https://example.test/explore.jpg',
+                              'width': 640,
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              ]),
+            ]),
+          )
+          .single
+          .videos
+          .single;
+
+      expect(item.itemType, VideoItemType.browseDestination);
+      expect(item.id, isNull);
+      expect(item.browseId, 'FEwhat_to_watch');
+    },
+  );
+
+  test('parses playlist watch endpoints with both video and playlist IDs', () {
+    final sections = service.parseHomeFeedResponse(
+      _homeResponse([
+        _shelf('Mix', [
+          {
+            'tileRenderer': {
+              'contentType': 'TILE_CONTENT_TYPE_PLAYLIST',
+              'onSelectCommand': {
+                'clickTrackingParams': 'tracking-value',
+                'watchEndpoint': {
+                  'videoId': 'mix-first-video',
+                  'playlistId': 'RDmix-playlist',
+                  'params': 'playlist-params',
+                  'continuePlayback': true,
+                },
+              },
+              'metadata': {
+                'tileMetadataRenderer': {
+                  'title': {'simpleText': 'Daily Mix'},
+                },
+              },
+              'header': {
+                'tileHeaderRenderer': {
+                  'thumbnail': {
+                    'thumbnails': [
+                      {'url': 'https://example.test/mix.jpg', 'width': 640},
+                    ],
+                  },
+                  'thumbnailOverlays': <dynamic>[],
+                },
+              },
+            },
+          },
+        ]),
+      ]),
+    );
+
+    final mix = sections.single.videos.single;
+    expect(mix.itemType, VideoItemType.playlist);
+    expect(mix.id, 'mix-first-video');
+    expect(mix.playlistId, 'RDmix-playlist');
+    expect(mix.browseId, isNull);
+    expect(
+      mix.videoUrl,
+      'https://www.youtube.com/watch?v=mix-first-video&list=RDmix-playlist',
+    );
   });
 
   test('keeps channel tiles as browse destinations', () {
@@ -440,6 +862,7 @@ void main() {
 
     final channel = sections.single.videos.single;
     expect(channel.id, isNull);
+    expect(channel.itemType, VideoItemType.channel);
     expect(channel.browseId, 'channel-browse-id');
     expect(channel.title, '影之刃零');
     expect(channel.thumbnailUrl, isEmpty);
@@ -469,38 +892,126 @@ void main() {
     expect(entry.thumbnailUrl, isEmpty);
   });
 
-  test(
-    'parses continuation tiles without contentType from their endpoints',
-    () {
-      final sections = service.parseHomeFeedResponse(
-        _homeResponse([
-          _shelf('Original audio', [
-            {
-              'tileRenderer': _tile(
-                videoId: 'audio-video-id',
-                title: 'Original audio video',
-                thumbnailUrl: 'https://example.test/audio-video.jpg',
-                contentType: null,
-              ),
-            },
-            {
-              'tileRenderer': _tile(
-                videoId: null,
-                browseId: 'audio-playlist-browse-id',
-                title: 'Original audio playlist',
-                thumbnailUrl: 'https://example.test/audio-playlist.jpg',
-                contentType: null,
-              ),
-            },
+  test('infers video type only from a single watch endpoint', () {
+    final item = service
+        .parseHomeFeedResponse(
+          _homeResponse([
+            _shelf('Original audio', [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'audio-video-id',
+                  title: 'Original audio video',
+                  thumbnailUrl: 'https://example.test/audio-video.jpg',
+                  contentType: null,
+                ),
+              },
+            ]),
           ]),
-        ]),
-      );
+        )
+        .single
+        .videos
+        .single;
 
-      expect(sections.single.videos.map((video) => video.id), [
-        'audio-video-id',
-        null,
-      ]);
-      expect(sections.single.videos.last.browseId, 'audio-playlist-browse-id');
+    expect(item.itemType, VideoItemType.video);
+    expect(item.id, 'audio-video-id');
+  });
+
+  test('treats a video tile with reelWatchEndpoint as Shorts', () {
+    final item = service
+        .parseHomeFeedResponse(
+          _homeResponse([
+            _shelf('Shorts continuation', [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'continued-short',
+                  title: 'Continued short',
+                  thumbnailUrl: 'https://example.test/continued-short.jpg',
+                  contentType: 'TILE_CONTENT_TYPE_VIDEO',
+                  useReelEndpoint: true,
+                ),
+              },
+            ]),
+          ]),
+        )
+        .single
+        .videos
+        .single;
+
+    expect(item.itemType, VideoItemType.shorts);
+    expect(item.id, 'continued-short');
+    expect(item.videoUrl, 'https://www.youtube.com/shorts/continued-short');
+  });
+
+  test(
+    'classifies a content-type-free browse endpoint as generic navigation',
+    () {
+      final item = service
+          .parseHomeFeedResponse(
+            _homeResponse([
+              _shelf('Topics', [
+                {
+                  'tileRenderer': {
+                    'onSelectCommand': {
+                      'browseEndpoint': {'browseId': 'topic-browse-id'},
+                    },
+                    'metadata': {
+                      'tileMetadataRenderer': {
+                        'title': {'simpleText': '主题入口'},
+                      },
+                    },
+                    'header': {
+                      'tileHeaderRenderer': {
+                        'thumbnail': {
+                          'thumbnails': [
+                            {
+                              'url': 'https://example.test/topic.jpg',
+                              'width': 640,
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              ]),
+            ]),
+          )
+          .single
+          .videos
+          .single;
+
+      expect(item.itemType, VideoItemType.browseDestination);
+      expect(item.id, isNull);
+      expect(item.browseId, 'topic-browse-id');
+    },
+  );
+
+  test(
+    'surfaces missing content type when endpoint classification is ambiguous',
+    () {
+      expect(
+        () => service.parseHomeFeedResponse(
+          _homeResponse([
+            _shelf('Invalid tile', [
+              {
+                'tileRenderer': {
+                  'onSelectCommand': {
+                    'watchEndpoint': {'videoId': 'video-id'},
+                    'browseEndpoint': {'browseId': 'browse-id'},
+                  },
+                },
+              },
+            ]),
+          ]),
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('无法从唯一 endpoint 分类'),
+          ),
+        ),
+      );
     },
   );
 
@@ -580,6 +1091,64 @@ void main() {
       ),
     );
   });
+
+  test('parses live status from a recognized tile badge', () {
+    final tile = Map<String, dynamic>.from(
+      _tile(
+        videoId: 'live-video',
+        title: 'Live video',
+        thumbnailUrl: 'https://example.test/live.jpg',
+      ),
+    );
+    final header = Map<String, dynamic>.from(tile['header']);
+    final tileHeader = Map<String, dynamic>.from(header['tileHeaderRenderer']);
+    final overlays = List<dynamic>.from(tileHeader['thumbnailOverlays']);
+    overlays.add(<String, dynamic>{
+      'thumbnailOverlayTimeStatusRenderer': <String, String>{'style': 'LIVE'},
+    });
+    tileHeader['thumbnailOverlays'] = overlays;
+    header['tileHeaderRenderer'] = tileHeader;
+    tile['header'] = header;
+
+    final video = service
+        .parseHomeFeedResponse(
+          _homeResponse([
+            _shelf('Live', [
+              {'tileRenderer': tile},
+            ]),
+          ]),
+        )
+        .single
+        .videos
+        .single;
+
+    expect(video.itemType, VideoItemType.video);
+    expect(video.isLive, isTrue);
+  });
+
+  test(
+    'surfaces an unsupported card renderer instead of searching inside it',
+    () {
+      expect(
+        () => service.parseHomeFeedResponse(
+          _homeResponse([
+            _shelf('Recommended', [
+              {
+                'unknownCardRenderer': {'videoId': 'hidden-video'},
+              },
+            ]),
+          ]),
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('不支持的条目 renderer'),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 Map<String, dynamic> _homeResponse(List<Map<String, dynamic>> sections) => {
@@ -646,12 +1215,18 @@ Map<String, dynamic> _tile({
   String? browseId,
 }) => {
   if (contentType != null) 'contentType': contentType,
-  'onSelectCommand': {
-    if (browseId != null) 'browseEndpoint': {'browseId': browseId},
-    if (useReelEndpoint)
-      'reelWatchEndpoint': {if (videoId != null) 'videoId': videoId}
-    else
-      'watchEndpoint': {if (videoId != null) 'videoId': videoId},
+  'onSelectCommand': switch (contentType) {
+    'TILE_CONTENT_TYPE_TRACK' ||
+    'TILE_CONTENT_TYPE_PLAYLIST' ||
+    'TILE_CONTENT_TYPE_CHANNEL' => {
+      'browseEndpoint': {if (browseId != null) 'browseId': browseId},
+    },
+    _ => {
+      if (useReelEndpoint)
+        'reelWatchEndpoint': {if (videoId != null) 'videoId': videoId}
+      else
+        'watchEndpoint': {if (videoId != null) 'videoId': videoId},
+    },
   },
   if (!titleInOverlay)
     'metadata': {

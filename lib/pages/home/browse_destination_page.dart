@@ -154,32 +154,81 @@ class _BrowseDestinationPageState extends State<BrowseDestinationPage> {
   }
 
   void _openVideo(Video video) {
-    if (video.id != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => VideoDetailPage(video: video)),
-      );
-      return;
-    }
-
-    final browseId = video.browseId;
-    if (browseId == null || browseId.isEmpty) {
-      throw StateError('YouTube 列表条目缺少 videoId 和 browseId');
-    }
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => BrowseDestinationPage(
-          destination: VideoSection(
-            title: video.title,
-            videos: const [],
-            browseId: browseId,
-            browseParams: video.browseParams,
-            browseTitle: video.title,
+    switch (video.itemType) {
+      case VideoItemType.video:
+      case VideoItemType.shorts:
+        if (video.id == null || video.id!.isEmpty || video.browseId != null) {
+          throw StateError(
+            'YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配',
+          );
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VideoDetailPage(video: video),
           ),
-        ),
-      ),
-    );
+        );
+        return;
+      case VideoItemType.track:
+      case VideoItemType.channel:
+      case VideoItemType.browseDestination:
+        if (video.id != null ||
+            video.browseId == null ||
+            video.browseId!.isEmpty) {
+          throw StateError(
+            'YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配',
+          );
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BrowseDestinationPage(
+              destination: VideoSection(
+                title: video.title,
+                videos: const [],
+                browseId: video.browseId,
+                browseParams: video.browseParams,
+                browseTitle: video.title,
+              ),
+            ),
+          ),
+        );
+        return;
+      case VideoItemType.playlist:
+        if (video.id != null) {
+          if (video.id!.isEmpty ||
+              video.playlistId == null ||
+              video.playlistId!.isEmpty ||
+              video.browseId != null) {
+            throw StateError('YouTube playlist 条目 endpoint 与内容类型不匹配');
+          }
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => VideoDetailPage(video: video),
+            ),
+          );
+          return;
+        }
+        if (video.browseId == null || video.browseId!.isEmpty) {
+          throw StateError('YouTube playlist 条目缺少 browseId 或 videoId');
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BrowseDestinationPage(
+              destination: VideoSection(
+                title: video.title,
+                videos: const [],
+                browseId: video.browseId,
+                browseParams: video.browseParams,
+                browseTitle: video.title,
+              ),
+            ),
+          ),
+        );
+        return;
+    }
   }
 }
 

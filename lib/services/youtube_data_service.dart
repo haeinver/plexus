@@ -213,9 +213,7 @@ class YouTubeDataService {
 
       sections.addAll(nextSections);
       yield List.unmodifiable(sections);
-      continuation = _extractNextContinuationToken(
-        _continuationSectionList(continuationData),
-      );
+      continuation = extractHomeSectionContinuationToken(continuationData);
     }
   }
 
@@ -283,16 +281,30 @@ class YouTubeDataService {
       );
     }
 
-    final dynamic renderer =
+    final dynamic rawGridRenderer =
         continuationContents['horizontalListContinuation'] ??
         continuationContents['gridContinuation'] ??
         continuationContents['playlistVideoListContinuation'] ??
         continuationContents['tvSurfaceContentContinuation']?['content']?['gridRenderer'];
-    if (renderer is! Map<String, dynamic>) {
-      throw const FormatException('YouTube 分区 continuation 缺少列表 renderer');
+    final sectionListContinuation = _continuationSectionList(data);
+    if (rawGridRenderer != null && rawGridRenderer is! Map<String, dynamic>) {
+      throw const FormatException(
+        'YouTube 分区 continuation 的 grid renderer 格式无效',
+      );
+    }
+    final Map<String, dynamic>? gridRenderer =
+        rawGridRenderer as Map<String, dynamic>?;
+    if (gridRenderer == null && sectionListContinuation == null) {
+      throw FormatException(
+        'YouTube 分区 continuation 缺少列表 renderer；'
+        'continuationContents 字段：${continuationContents.keys.toList()}；'
+        '结构：${_describeJsonShape(continuationContents)}',
+      );
     }
 
-    final dynamic rawItems = renderer['items'] ?? renderer['contents'];
+    final dynamic rawItems = gridRenderer != null
+        ? gridRenderer['items'] ?? gridRenderer['contents']
+        : sectionListContinuation!['contents'];
     if (rawItems is! List) {
       throw const FormatException('YouTube 分区 continuation 缺少 items/contents');
     }
@@ -311,7 +323,10 @@ class YouTubeDataService {
     return VideoSection(
       title: section.title,
       videos: videos,
-      continuationToken: _extractNextContinuationToken(renderer),
+      continuationToken:
+          _extractNextContinuationToken(gridRenderer) ??
+          _extractNextContinuationToken(sectionListContinuation) ??
+          _findContinuationToken(rawItems),
     );
   }
 
@@ -452,7 +467,24 @@ class YouTubeDataService {
     if (data is! Map<String, dynamic>) {
       throw const FormatException('YouTube 首页响应不是 JSON 对象');
     }
-    return _extractNextContinuationToken(_initialSectionList(data));
+    final sectionList =
+        _continuationSectionList(data) ?? _initialSectionList(data);
+    return _homeSectionListContinuationToken(sectionList);
+  }
+
+  String? _homeSectionListContinuationToken(Map<String, dynamic>? sectionList) {
+    final token = _extractNextContinuationToken(sectionList);
+    if (token != null) return token;
+
+    final contents = sectionList?['contents'];
+    if (contents is! List || contents.isEmpty) return null;
+
+    final firstShelf = contents.first;
+    if (firstShelf is! Map<String, dynamic>) return null;
+    final shelfRenderer = firstShelf['shelfRenderer'];
+    if (shelfRenderer is! Map<String, dynamic>) return null;
+
+    return _extractShelfContinuationToken(shelfRenderer);
   }
 
   Map<String, dynamic>? _initialSectionList(Map<String, dynamic> data) {
@@ -482,6 +514,9 @@ class YouTubeDataService {
 
   String? _findContinuationToken(dynamic node) {
     if (node is Map<String, dynamic>) {
+      if (node.containsKey('gridButtonRenderer')) {
+        return _extractGridButtonContinuation(node['gridButtonRenderer']);
+      }
       final token = _extractContinuationToken(node['continuations']);
       if (token != null) return token;
       for (final value in node.values) {
@@ -514,10 +549,26 @@ class YouTubeDataService {
   List<VideoSection> _parseHomeShelves(List<dynamic> rawShelves) {
     final sections = <VideoSection>[];
     for (final sectionNode in rawShelves) {
-      if (sectionNode is! Map<String, dynamic>) continue;
+      if (sectionNode is! Map<String, dynamic>) {
+        throw FormatException('YouTube 首页包含无效分区节点：${sectionNode.runtimeType}');
+      }
+      if (sectionNode.containsKey('appealSurveyShelfRenderer')) {
+        if (sectionNode['appealSurveyShelfRenderer'] is! Map<String, dynamic>) {
+          throw const FormatException('YouTube appealSurveyShelfRenderer 格式无效');
+        }
+        continue;
+      }
 
       final dynamic rawShelf = sectionNode['shelfRenderer'];
-      if (rawShelf == null) continue;
+      if (rawShelf == null) {
+        if (sectionNode.containsKey('adSlotRenderer') ||
+            sectionNode.containsKey('continuationItemRenderer')) {
+          continue;
+        }
+        throw FormatException(
+          'YouTube 首页包含不支持的分区 renderer：${sectionNode.keys.toList()}',
+        );
+      }
       if (rawShelf is! Map<String, dynamic>) {
         throw const FormatException('YouTube 首页 shelfRenderer 格式无效');
       }
@@ -525,16 +576,44 @@ class YouTubeDataService {
       final title = _extractShelfTitle(rawShelf);
       final browseDestination = _extractShelfBrowseDestination(rawShelf);
       final items = _extractShelfItems(sectionNode, rawShelf);
-      if (items == null && browseDestination == null) continue;
+      if (items == null && browseDestination == null) {
+        throw FormatException(
+          'YouTube 首页分区「${title ?? '(无标题)'}」没有受支持的条目列表或浏览入口',
+        );
+      }
 
       final videos = <Video>[];
       if (items != null) _extractSectionVideos(items, title ?? '', videos);
-      if (videos.isEmpty && browseDestination == null) continue;
+      final continuationToken =
+          _extractShelfContinuationToken(rawShelf) ??
+          (items == null ? null : _findContinuationToken(items));
+      if (videos.isEmpty &&
+          browseDestination == null &&
+          items != null &&
+          items.isNotEmpty &&
+          items.every(_isGridButtonOnlyEntry)) {
+        continue;
+      }
+      if (videos.isEmpty &&
+          browseDestination == null &&
+          continuationToken == null) {
+        final itemShapes = items
+            ?.take(6)
+            .map((item) => _describeJsonShape(item))
+            .toList();
+        throw FormatException(
+          'YouTube 首页分区「${title ?? '(无标题)'}」没有可解析的内容；'
+          'shelf字段：${rawShelf.keys.toList()}；'
+          'content结构：${_describeJsonShape(rawShelf['content'])}；'
+          '条目结构：$itemShapes；'
+          'continuation：${_extractShelfContinuationToken(rawShelf) != null}',
+        );
+      }
       sections.add(
         VideoSection(
           title: title,
           videos: videos,
-          continuationToken: _extractShelfContinuationToken(rawShelf),
+          continuationToken: continuationToken,
           browseId: browseDestination?.browseId,
           browseParams: browseDestination?.browseParams,
           browseTitle: browseDestination?.title,
@@ -646,19 +725,30 @@ class YouTubeDataService {
     List<Video> result,
   ) {
     if (node is Map<String, dynamic>) {
-      if (node.containsKey('adSlotRenderer')) return;
+      if (node.containsKey('adSlotRenderer') ||
+          node.containsKey('continuationItemRenderer')) {
+        return;
+      }
 
-      for (final key in const [
+      final rendererKeys = const [
         'videoRenderer',
         'gridVideoRenderer',
         'compactVideoRenderer',
         'playlistVideoRenderer',
-      ]) {
-        if (node[key] != null) {
-          final video = _parseVideoRenderer(node[key], sectionTitle);
-          if (!result.any((item) => item.id == video.id)) result.add(video);
-          return;
-        }
+      ].where(node.containsKey).toList();
+      if (rendererKeys.length > 1 ||
+          (rendererKeys.isNotEmpty && node.containsKey('tileRenderer'))) {
+        throw FormatException(
+          'YouTube 分区「$sectionTitle」条目包含多个内容 renderer：${node.keys.toList()}',
+        );
+      }
+      if (rendererKeys.isNotEmpty) {
+        final video = _parseVideoRenderer(
+          node[rendererKeys.single],
+          sectionTitle,
+        );
+        if (!result.any((item) => item.id == video.id)) result.add(video);
+        return;
       }
       if (node['tileRenderer'] != null) {
         final video = _parseTileRenderer(node['tileRenderer'], sectionTitle);
@@ -669,14 +759,82 @@ class YouTubeDataService {
         }
         return;
       }
-      node.forEach(
-        (key, value) => _extractSectionVideos(value, sectionTitle, result),
+      if (node['richItemRenderer'] is Map<String, dynamic>) {
+        _extractSectionVideos(
+          node['richItemRenderer']['content'],
+          sectionTitle,
+          result,
+        );
+        return;
+      }
+      if (node['itemSectionRenderer'] is Map<String, dynamic>) {
+        _extractSectionVideos(
+          node['itemSectionRenderer']['contents'],
+          sectionTitle,
+          result,
+        );
+        return;
+      }
+      if (node['shelfRenderer'] is Map<String, dynamic>) {
+        final shelf = node['shelfRenderer'] as Map<String, dynamic>;
+        final items = _extractShelfItems(node, shelf);
+        if (items == null) {
+          throw FormatException('YouTube 分区「$sectionTitle」的 shelf 缺少受支持的条目列表');
+        }
+        _extractSectionVideos(items, sectionTitle, result);
+        return;
+      }
+      if (node.containsKey('gridButtonRenderer')) {
+        _extractGridButtonContinuation(node['gridButtonRenderer']);
+        return;
+      }
+      throw FormatException(
+        'YouTube 分区「$sectionTitle」包含不支持的条目 renderer：${node.keys.toList()}',
       );
     } else if (node is List) {
       for (final item in node) {
         _extractSectionVideos(item, sectionTitle, result);
       }
+    } else {
+      throw FormatException(
+        'YouTube 分区「$sectionTitle」包含无效条目：${node.runtimeType}',
+      );
     }
+  }
+
+  bool _isGridButtonOnlyEntry(dynamic node) =>
+      node is Map<String, dynamic> &&
+      node.length == 1 &&
+      node['gridButtonRenderer'] is Map<String, dynamic>;
+
+  String _extractGridButtonContinuation(dynamic rawButton) {
+    if (rawButton is! Map<String, dynamic>) {
+      throw const FormatException('YouTube gridButtonRenderer 格式无效');
+    }
+    final title = _extractText(rawButton['title']);
+    if (title == null || title.trim().isEmpty) {
+      throw const FormatException('YouTube gridButtonRenderer 缺少标题');
+    }
+    final navigation = rawButton['navigationEndpoint'];
+    if (navigation is! Map<String, dynamic>) {
+      throw FormatException(
+        'YouTube gridButtonRenderer「$title」缺少 navigationEndpoint',
+      );
+    }
+    final reloadCommand = navigation['loadReloadContinuationCommand'];
+    if (reloadCommand is! Map<String, dynamic>) {
+      throw FormatException(
+        'YouTube gridButtonRenderer「$title」缺少 loadReloadContinuationCommand；'
+        'navigationEndpoint 字段：${navigation.keys.toList()}',
+      );
+    }
+    final token = reloadCommand['continuation']?.toString();
+    if (token == null || token.isEmpty) {
+      throw FormatException(
+        'YouTube gridButtonRenderer「$title」的 reload command 缺少 continuation',
+      );
+    }
+    return token;
   }
 
   Video _parseVideoRenderer(dynamic renderer, String sectionTitle) {
@@ -724,6 +882,15 @@ class YouTubeDataService {
 
     return Video(
       id: videoId,
+      itemType: VideoItemType.video,
+      isLive:
+          _hasVideoState(renderer['badges'], 'LIVE') ||
+          _hasVideoState(renderer['thumbnailOverlays'], 'LIVE') ||
+          _hasVideoState(renderer['upcomingEventData'], 'LIVE'),
+      isUpcoming:
+          _hasVideoState(renderer['badges'], 'UPCOMING') ||
+          _hasVideoState(renderer['thumbnailOverlays'], 'UPCOMING') ||
+          _hasVideoState(renderer['upcomingEventData'], 'UPCOMING'),
       title: title,
       channelName: channelName,
       channelAvatar: channelAvatar,
@@ -745,32 +912,108 @@ class YouTubeDataService {
       throw const FormatException('YouTube 磁贴视频条目格式无效');
     }
 
-    final contentType = renderer['contentType']?.toString();
-    const supportedContentTypes = {
-      'TILE_CONTENT_TYPE_VIDEO',
-      'TILE_CONTENT_TYPE_SHORTS',
-      'TILE_CONTENT_TYPE_TRACK',
-      'TILE_CONTENT_TYPE_PLAYLIST',
-      'TILE_CONTENT_TYPE_CHANNEL',
-    };
-    if (contentType != null && !supportedContentTypes.contains(contentType)) {
-      throw FormatException('YouTube 首页 tile 类型不受支持：$contentType');
-    }
-
+    final contentType = renderer['contentType'];
     final command = renderer['onSelectCommand'];
-    final videoId =
-        command?['watchEndpoint']?['videoId']?.toString() ??
-        command?['reelWatchEndpoint']?['videoId']?.toString();
-    final browseId = command?['browseEndpoint']?['browseId']?.toString();
-    final browseParams = command?['browseEndpoint']?['params']?.toString();
-    if ((videoId == null || videoId.isEmpty) &&
-        (browseId == null || browseId.isEmpty)) {
-      if (contentType == null) {
-        throw const FormatException(
-          'YouTube tile 缺少 contentType，且没有可识别的 videoId 或 browseId',
+    if (command is! Map<String, dynamic>) {
+      throw const FormatException('YouTube tile 缺少 onSelectCommand');
+    }
+    final itemType = switch (contentType) {
+      'TILE_CONTENT_TYPE_VIDEO' => _videoTileTypeFromEndpoint(command),
+      'TILE_CONTENT_TYPE_SHORTS' => VideoItemType.shorts,
+      'TILE_CONTENT_TYPE_TRACK' => VideoItemType.track,
+      'TILE_CONTENT_TYPE_PLAYLIST' => VideoItemType.playlist,
+      'TILE_CONTENT_TYPE_CHANNEL' => VideoItemType.channel,
+      null => _inferTileTypeFromEndpoint(command),
+      _ => throw FormatException('YouTube 首页 tile 类型不受支持：$contentType'),
+    };
+
+    String? videoId;
+    String? browseId;
+    String? browseParams;
+    String? playlistId;
+    if (itemType == VideoItemType.video || itemType == VideoItemType.shorts) {
+      final hasWatchEndpoint = command['watchEndpoint'] != null;
+      final hasReelEndpoint = command['reelWatchEndpoint'] != null;
+      final hasBrowseEndpoint = command['browseEndpoint'] != null;
+      if (hasWatchEndpoint == hasReelEndpoint ||
+          hasBrowseEndpoint ||
+          (itemType == VideoItemType.shorts && !hasReelEndpoint)) {
+        throw FormatException(
+          'YouTube $contentType tile 必须且只能包含与类型匹配的 watchEndpoint 或 '
+          'reelWatchEndpoint；实际结构：${_describeJsonShape(command)}；'
+          'browseId：${command['browseEndpoint']?['browseId']}',
         );
       }
-      throw const FormatException('YouTube tile 缺少 videoId 或 browseId');
+      final endpointName = hasReelEndpoint
+          ? 'reelWatchEndpoint'
+          : 'watchEndpoint';
+      final endpoint = command[endpointName];
+      if (endpoint is! Map<String, dynamic>) {
+        throw FormatException(
+          'YouTube $contentType tile 缺少 $endpointName；'
+          'onSelectCommand 结构：${_describeJsonShape(command)}',
+        );
+      }
+      videoId = endpoint['videoId']?.toString();
+      if (videoId == null || videoId.isEmpty) {
+        throw FormatException('YouTube $contentType tile 缺少 videoId');
+      }
+    } else if (itemType == VideoItemType.playlist) {
+      final hasBrowseEndpoint = command['browseEndpoint'] != null;
+      final hasWatchEndpoint = command['watchEndpoint'] != null;
+      if (hasBrowseEndpoint == hasWatchEndpoint) {
+        throw FormatException(
+          'YouTube playlist tile 必须且只能包含 browseEndpoint 或 '
+          'watchEndpoint；实际 onSelectCommand 字段：${command.keys.toList()}',
+        );
+      }
+      if (hasWatchEndpoint) {
+        final endpoint = command['watchEndpoint'];
+        if (endpoint is! Map<String, dynamic>) {
+          throw const FormatException(
+            'YouTube playlist tile 的 watchEndpoint 格式无效',
+          );
+        }
+        videoId = endpoint['videoId']?.toString();
+        playlistId = endpoint['playlistId']?.toString();
+        if (videoId == null || videoId.isEmpty) {
+          throw const FormatException(
+            'YouTube playlist watchEndpoint 缺少 videoId',
+          );
+        }
+        if (playlistId == null || playlistId.isEmpty) {
+          throw const FormatException(
+            'YouTube playlist watchEndpoint 缺少 playlistId',
+          );
+        }
+      } else {
+        final endpoint = command['browseEndpoint'];
+        if (endpoint is! Map<String, dynamic>) {
+          throw const FormatException(
+            'YouTube playlist tile 的 browseEndpoint 格式无效',
+          );
+        }
+        browseId = endpoint['browseId']?.toString();
+        browseParams = endpoint['params']?.toString();
+        if (browseId == null || browseId.isEmpty) {
+          throw const FormatException(
+            'YouTube playlist browseEndpoint 缺少 browseId',
+          );
+        }
+      }
+    } else {
+      final endpoint = command['browseEndpoint'];
+      if (endpoint is! Map<String, dynamic>) {
+        throw FormatException(
+          'YouTube $contentType tile 缺少 browseEndpoint；'
+          'onSelectCommand 字段：${command.keys.toList()}',
+        );
+      }
+      browseId = endpoint['browseId']?.toString();
+      browseParams = endpoint['params']?.toString();
+      if (browseId == null || browseId.isEmpty) {
+        throw FormatException('YouTube $contentType tile 缺少 browseId');
+      }
     }
 
     final metadata = renderer['metadata']?['tileMetadataRenderer'];
@@ -810,11 +1053,22 @@ class YouTubeDataService {
         _extractTileDuration(tileHeader) ??
         _extractText(trackTileHeader?['duration']) ??
         '';
+    if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+      if (itemType == VideoItemType.video ||
+          itemType == VideoItemType.shorts ||
+          itemType == VideoItemType.track) {
+        throw FormatException('YouTube $contentType tile 缺少缩略图地址');
+      }
+    }
 
     return Video(
       id: videoId,
+      itemType: itemType,
+      isLive: _hasVideoState(tileHeader?['thumbnailOverlays'], 'LIVE'),
+      isUpcoming: _hasVideoState(tileHeader?['thumbnailOverlays'], 'UPCOMING'),
       browseId: browseId,
       browseParams: browseParams,
+      playlistId: playlistId,
       title: title,
       channelName: '',
       channelAvatar: '',
@@ -824,12 +1078,124 @@ class YouTubeDataService {
       thumbnailUrl: thumbnailUrl ?? '',
       videoUrl: videoId == null || videoId.isEmpty
           ? ''
-          : 'https://www.youtube.com/watch?v=$videoId',
+          : itemType == VideoItemType.shorts
+          ? 'https://www.youtube.com/shorts/$videoId'
+          : playlistId == null
+          ? 'https://www.youtube.com/watch?v=$videoId'
+          : Uri.https('www.youtube.com', '/watch', {
+              'v': videoId,
+              'list': playlistId,
+            }).toString(),
       categoryId: 'home',
       categoryName: sectionTitle,
       description: title,
       likesCount: 0,
     );
+  }
+
+  VideoItemType _inferTileTypeFromEndpoint(Map<String, dynamic> command) {
+    final endpoints = const [
+      'watchEndpoint',
+      'reelWatchEndpoint',
+      'browseEndpoint',
+    ].where(command.containsKey).toList();
+    if (endpoints.length != 1) {
+      throw FormatException(
+        'YouTube tile 缺少 contentType，且无法从唯一 endpoint 分类；'
+        'onSelectCommand 字段：${command.keys.toList()}',
+      );
+    }
+
+    return switch (endpoints.single) {
+      'watchEndpoint' =>
+        command['watchEndpoint'] is Map<String, dynamic> &&
+                (command['watchEndpoint']['playlistId']
+                        ?.toString()
+                        .isNotEmpty ??
+                    false)
+            ? VideoItemType.playlist
+            : VideoItemType.video,
+      'reelWatchEndpoint' => VideoItemType.shorts,
+      'browseEndpoint' => _browseEndpointTileType(command['browseEndpoint']),
+      _ => throw StateError('Unreachable tile endpoint: ${endpoints.single}'),
+    };
+  }
+
+  VideoItemType _videoTileTypeFromEndpoint(Map<String, dynamic> command) {
+    final endpoints = const [
+      'watchEndpoint',
+      'reelWatchEndpoint',
+      'browseEndpoint',
+    ].where(command.containsKey).toList();
+    if (endpoints.length != 1) {
+      throw FormatException(
+        'YouTube VIDEO tile 必须且只能包含一个播放或浏览 endpoint；'
+        '实际字段：${command.keys.toList()}',
+      );
+    }
+
+    return switch (endpoints.single) {
+      'watchEndpoint' => VideoItemType.video,
+      'reelWatchEndpoint' => VideoItemType.shorts,
+      'browseEndpoint' => _browseEndpointTileType(command['browseEndpoint']),
+      _ => throw StateError(
+        'Unreachable video tile endpoint: ${endpoints.single}',
+      ),
+    };
+  }
+
+  VideoItemType _browseEndpointTileType(dynamic rawEndpoint) {
+    if (rawEndpoint is! Map<String, dynamic>) {
+      throw const FormatException('YouTube tile 的 browseEndpoint 格式无效');
+    }
+    final browseId = rawEndpoint['browseId']?.toString();
+    if (browseId == null || browseId.isEmpty) {
+      throw const FormatException('YouTube tile 的 browseEndpoint 缺少 browseId');
+    }
+    return browseId.startsWith('VL')
+        ? VideoItemType.playlist
+        : VideoItemType.browseDestination;
+  }
+
+  Object? _describeJsonShape(dynamic value, [int depth = 0]) {
+    if (depth >= 5) {
+      return value is Map
+          ? '<object>'
+          : value is List
+          ? '<list>'
+          : value?.runtimeType.toString();
+    }
+    if (value is Map) {
+      return {
+        for (final entry in value.entries.take(12))
+          entry.key.toString(): entry.value is Map || entry.value is List
+              ? _describeJsonShape(entry.value, depth + 1)
+              : entry.value?.runtimeType.toString(),
+      };
+    }
+    if (value is List) {
+      return value
+          .take(4)
+          .map((item) => _describeJsonShape(item, depth + 1))
+          .toList();
+    }
+    return value?.runtimeType.toString();
+  }
+
+  bool _hasVideoState(dynamic node, String state) {
+    if (node is Map<String, dynamic>) {
+      final style = node['style']?.toString().toUpperCase();
+      final text = _extractText(node['text'])?.toUpperCase();
+      final badgeStyle = state == 'LIVE'
+          ? 'BADGE_STYLE_TYPE_LIVE_NOW'
+          : 'BADGE_STYLE_TYPE_UPCOMING';
+      if (style == state || style == badgeStyle || text == state) return true;
+      return node.values.any((value) => _hasVideoState(value, state));
+    }
+    if (node is List) {
+      return node.any((value) => _hasVideoState(value, state));
+    }
+    return false;
   }
 
   List<String> _extractTileMetadataLines(dynamic linesNode) {
