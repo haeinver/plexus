@@ -7,6 +7,7 @@ import '../../services/youtube_auth_service.dart';
 import '../../services/youtube_data_service.dart';
 import '../../widgets/error_state_widget.dart';
 import '../../widgets/sign_in_required_widget.dart';
+import '../../widgets/video_card.dart';
 import 'browse_destination_page.dart';
 import '../player/video_detail_page.dart';
 import '../search/search_page.dart';
@@ -172,15 +173,52 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _openBrowseDestination(VideoSection destination) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BrowseDestinationPage(destination: destination),
+      ),
+    );
+  }
+
+  void _openVideoOrBrowseDestination(Video video) {
+    if (video.id == null) {
+      final browseId = video.browseId;
+      if (browseId == null || browseId.isEmpty) {
+        throw StateError('YouTube 浏览入口缺少 browseId');
+      }
+      _openBrowseDestination(
+        VideoSection(
+          title: video.title,
+          videos: const [],
+          browseId: browseId,
+          browseParams: video.browseParams,
+          browseTitle: video.title,
+        ),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => VideoDetailPage(video: video)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isLoggedIn = _authService.isLoggedIn;
-    final cardWidth = (MediaQuery.sizeOf(context).width * 0.48)
-        .clamp(168.0, 280.0)
+    const horizontalPageInset = 16.0;
+    const horizontalItemInset = 4.0;
+    final feedWidth =
+        MediaQuery.sizeOf(context).width - horizontalPageInset * 2;
+    final cardWidth = ((feedWidth - horizontalItemInset * 4) / 2)
+        .clamp(136.0, 280.0)
         .toDouble();
-    final rowHeight = cardWidth * 9 / 16 + 112;
+    final rowHeight = cardWidth * 9 / 16 + 84;
     final sectionKeys = List<String>.generate(
       _sections.length,
       (index) => 'home-section-$_feedLayoutGeneration-$index',
@@ -252,7 +290,7 @@ class _HomePageState extends State<HomePage> {
               child: ListView.builder(
                 key: PageStorageKey<String>('home-feed-$_feedLayoutGeneration'),
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                 itemCount:
                     _sections.length +
                     (_isLoading || _errorMessage != null ? 1 : 0),
@@ -280,150 +318,21 @@ class _HomePageState extends State<HomePage> {
                   }
                   final section = _sections[index];
                   final sectionKey = sectionKeys[index];
-                  return KeyedSubtree(
+                  return _HomeFeedSection(
                     key: ValueKey<String>(sectionKey),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (section.title != null &&
-                            section.title!.trim().isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                            child: Text(
-                              section.title!,
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        SizedBox(
-                          height: rowHeight,
-                          child: NotificationListener<ScrollNotification>(
-                            onNotification: (notification) {
-                              if (notification.metrics.axis ==
-                                      Axis.horizontal &&
-                                  section.browseId == null &&
-                                  (notification is ScrollUpdateNotification ||
-                                      notification is OverscrollNotification) &&
-                                  notification.metrics.extentAfter < 560) {
-                                _loadMoreSection(index);
-                              }
-                              return false;
-                            },
-                            child: ListView.builder(
-                              controller: _sectionScrollControllers.putIfAbsent(
-                                index,
-                                () => ScrollController(keepScrollOffset: false),
-                              ),
-                              key: PageStorageKey<String>(sectionKey),
-                              scrollDirection: Axis.horizontal,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              itemCount:
-                                  section.videos.length +
-                                  (section.browseId != null ||
-                                          section.continuationToken != null ||
-                                          _loadingSectionIndexes.contains(
-                                            index,
-                                          ) ||
-                                          _sectionErrors.containsKey(index)
-                                      ? 1
-                                      : 0),
-                              itemBuilder: (context, videoIndex) {
-                                if (videoIndex == section.videos.length) {
-                                  if (section.browseId != null) {
-                                    return _SectionBrowseCard(
-                                      cardWidth: cardWidth,
-                                      title: section.browseTitle!,
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                BrowseDestinationPage(
-                                                  destination: section,
-                                                ),
-                                          ),
-                                        );
-                                      },
-                                    );
-                                  }
-                                  return _SectionLoadMoreCard(
-                                    cardWidth: cardWidth,
-                                    isLoading: _loadingSectionIndexes.contains(
-                                      index,
-                                    ),
-                                    errorMessage: _sectionErrors[index],
-                                    onRetry: () => _loadMoreSection(index),
-                                  );
-                                }
-
-                                final video = section.videos[videoIndex];
-                                void openBrowseDestination() {
-                                  final browseId = video.browseId;
-                                  if (browseId == null || browseId.isEmpty) {
-                                    throw StateError('YouTube 浏览入口缺少 browseId');
-                                  }
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          BrowseDestinationPage(
-                                            destination: VideoSection(
-                                              title: video.title,
-                                              videos: const [],
-                                              browseId: browseId,
-                                              browseParams: video.browseParams,
-                                              browseTitle: video.title,
-                                            ),
-                                          ),
-                                    ),
-                                  );
-                                }
-
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                  ),
-                                  child: SizedBox(
-                                    width: cardWidth,
-                                    child: video.thumbnailUrl.isEmpty
-                                        ? _SectionBrowseCard(
-                                            cardWidth: cardWidth,
-                                            title: video.title,
-                                            onTap: openBrowseDestination,
-                                          )
-                                        : _HomeVideoCard(
-                                            key: ValueKey<String>(
-                                              'home-item-${video.id ?? video.browseId}-$videoIndex',
-                                            ),
-                                            video: video,
-                                            onTap: () {
-                                              if (video.id == null) {
-                                                openBrowseDestination();
-                                                return;
-                                              }
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (context) =>
-                                                      VideoDetailPage(
-                                                        video: video,
-                                                      ),
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                      ],
+                    sectionKey: sectionKey,
+                    section: section,
+                    cardWidth: cardWidth,
+                    rowHeight: rowHeight,
+                    scrollController: _sectionScrollControllers.putIfAbsent(
+                      index,
+                      () => ScrollController(keepScrollOffset: false),
                     ),
+                    isLoadingMore: _loadingSectionIndexes.contains(index),
+                    errorMessage: _sectionErrors[index],
+                    onLoadMore: () => _loadMoreSection(index),
+                    onOpenSection: () => _openBrowseDestination(section),
+                    onVideoTap: _openVideoOrBrowseDestination,
                   );
                 },
               ),
@@ -432,105 +341,118 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class _HomeVideoCard extends StatelessWidget {
-  final Video video;
-  final VoidCallback onTap;
+class _HomeFeedSection extends StatelessWidget {
+  final String sectionKey;
+  final VideoSection section;
+  final double cardWidth;
+  final double rowHeight;
+  final ScrollController scrollController;
+  final bool isLoadingMore;
+  final String? errorMessage;
+  final VoidCallback onLoadMore;
+  final VoidCallback onOpenSection;
+  final ValueChanged<Video> onVideoTap;
 
-  const _HomeVideoCard({super.key, required this.video, required this.onTap});
+  const _HomeFeedSection({
+    super.key,
+    required this.sectionKey,
+    required this.section,
+    required this.cardWidth,
+    required this.rowHeight,
+    required this.scrollController,
+    required this.isLoadingMore,
+    required this.errorMessage,
+    required this.onLoadMore,
+    required this.onOpenSection,
+    required this.onVideoTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final details = [
-      video.channelName,
-      video.views,
-      video.uploadTime,
-    ].where((value) => value.isNotEmpty).join(' · ');
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.network(
-                    video.thumbnailUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => ColoredBox(
-                      color: colorScheme.errorContainer,
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(8),
-                        child: SelectableText(
-                          '缩略图加载失败：$error',
-                          style: TextStyle(color: colorScheme.onErrorContainer),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (video.duration.isNotEmpty)
-                    Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black87,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          child: Text(
-                            video.duration,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (section.title != null && section.title!.trim().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
+            child: Text(
+              section.title!,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        SizedBox(
+          height: rowHeight,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification.metrics.axis == Axis.horizontal &&
+                  section.browseId == null &&
+                  (notification is ScrollUpdateNotification ||
+                      notification is OverscrollNotification) &&
+                  notification.metrics.extentAfter < 560) {
+                onLoadMore();
+              }
+              return false;
+            },
+            child: ListView.builder(
+              controller: scrollController,
+              key: PageStorageKey<String>(sectionKey),
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              itemCount:
+                  section.videos.length +
+                  (section.browseId != null ||
+                          section.continuationToken != null ||
+                          isLoadingMore ||
+                          errorMessage != null
+                      ? 1
+                      : 0),
+              itemBuilder: (context, videoIndex) {
+                if (videoIndex == section.videos.length) {
+                  if (section.browseId != null) {
+                    return _SectionBrowseCard(
+                      cardWidth: cardWidth,
+                      title: section.browseTitle!,
+                      onTap: onOpenSection,
+                    );
+                  }
+                  return _SectionLoadMoreCard(
+                    cardWidth: cardWidth,
+                    isLoading: isLoadingMore,
+                    errorMessage: errorMessage,
+                    onRetry: onLoadMore,
+                  );
+                }
+
+                final video = section.videos[videoIndex];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: SizedBox(
+                    width: cardWidth,
+                    child: video.thumbnailUrl.isEmpty
+                        ? _SectionBrowseCard(
+                            cardWidth: cardWidth,
+                            title: video.title,
+                            onTap: () => onVideoTap(video),
+                          )
+                        : VideoCard(
+                            key: ValueKey<String>(
+                              'home-item-${video.id ?? video.browseId}-$videoIndex',
                             ),
+                            video: video,
+                            onTap: () => onVideoTap(video),
                           ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    video.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
                   ),
-                  if (details.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      details,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+                );
+              },
             ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: 20),
+      ],
     );
   }
 }
