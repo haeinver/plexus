@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../../models/video.dart';
 import '../../models/video_section.dart';
+import '../player/special_video_pages.dart';
+import '../player/video_detail_page.dart';
 import '../../services/locale_service.dart';
 import '../../services/youtube_auth_service.dart';
 import '../../services/youtube_data_service.dart';
 import '../../widgets/error_state_widget.dart';
+import '../../widgets/feed_continuation_status.dart';
 import '../../widgets/sign_in_required_widget.dart';
-import '../../widgets/video_card.dart';
+import '../../widgets/video_section_row.dart';
 import 'browse_destination_page.dart';
-import '../player/video_detail_page.dart';
+import 'item_destination_pages.dart';
 import '../search/search_page.dart';
 
 /// 首页 (Home Page strictly following SmartTube SignInError & TVHTML5 loading logic)
@@ -173,11 +176,17 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _openBrowseDestination(VideoSection destination) {
+  void _openBrowseDestination(
+    VideoSection destination, {
+    VideoItemType? destinationType,
+  }) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => BrowseDestinationPage(destination: destination),
+        builder: (context) => BrowseDestinationPage(
+          destination: destination,
+          destinationType: destinationType,
+        ),
       ),
     );
   }
@@ -185,11 +194,19 @@ class _HomePageState extends State<HomePage> {
   void _openVideoOrBrowseDestination(Video video) {
     switch (video.itemType) {
       case VideoItemType.video:
-      case VideoItemType.shorts:
         if (video.id == null || video.id!.isEmpty || video.browseId != null) {
           throw StateError(
             'YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配',
           );
+        }
+        if (video.isLive || video.isUpcoming) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LiveEventDetailPage(video: video),
+            ),
+          );
+          return;
         }
         Navigator.push(
           context,
@@ -198,8 +215,31 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         return;
+      case VideoItemType.shorts:
+        if (video.id == null || video.id!.isEmpty || video.browseId != null) {
+          throw StateError('YouTube Shorts 条目 endpoint 与内容类型不匹配');
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ShortsDetailPage(video: video),
+          ),
+        );
+        return;
       case VideoItemType.track:
+        _openItemDestination(
+          video,
+          TrackDetailPage(video: video),
+          requiresBrowseId: true,
+        );
+        return;
       case VideoItemType.channel:
+        _openItemDestination(
+          video,
+          ChannelDetailPage(video: video),
+          requiresBrowseId: true,
+        );
+        return;
       case VideoItemType.browseDestination:
         if (video.id != null ||
             video.browseId == null ||
@@ -208,46 +248,40 @@ class _HomePageState extends State<HomePage> {
             'YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配',
           );
         }
-        _openBrowseDestination(
-          VideoSection(
-            title: video.title,
-            videos: const [],
-            browseId: video.browseId,
-            browseParams: video.browseParams,
-            browseTitle: video.title,
-          ),
+        _openItemDestination(
+          video,
+          BrowseEntryDetailPage(video: video),
+          requiresBrowseId: true,
         );
         return;
       case VideoItemType.playlist:
-        if (video.id != null) {
-          if (video.id!.isEmpty ||
-              video.playlistId == null ||
-              video.playlistId!.isEmpty ||
-              video.browseId != null) {
-            throw StateError('YouTube playlist 条目 endpoint 与内容类型不匹配');
-          }
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => VideoDetailPage(video: video),
-            ),
-          );
-          return;
-        }
-        if (video.browseId == null || video.browseId!.isEmpty) {
+        if ((video.browseId == null || video.browseId!.isEmpty) &&
+            (video.playlistId == null || video.playlistId!.isEmpty)) {
           throw StateError('YouTube playlist 条目缺少 browseId 或 videoId');
         }
-        _openBrowseDestination(
-          VideoSection(
-            title: video.title,
-            videos: const [],
-            browseId: video.browseId,
-            browseParams: video.browseParams,
-            browseTitle: video.title,
-          ),
-        );
+        if (video.browseId != null && video.id != null) {
+          throw StateError('YouTube playlist 条目同时含 browseId 和 videoId');
+        }
+        _openItemDestination(video, PlaylistDetailPage(video: video));
         return;
     }
+  }
+
+  void _openItemDestination(
+    Video video,
+    Widget destination, {
+    bool requiresBrowseId = false,
+  }) {
+    if (requiresBrowseId &&
+        (video.id != null ||
+            video.browseId == null ||
+            video.browseId!.isEmpty)) {
+      throw StateError('YouTube ${video.itemType.name} 条目缺少有效 browseId');
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(builder: (context) => destination),
+    );
   }
 
   @override
@@ -314,23 +348,14 @@ class _HomePageState extends State<HomePage> {
               onLoginSuccess: _loadHomeFeed,
             )
           : _isLoading && _sections.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: colorScheme.primary),
-                  const SizedBox(height: 16),
-                  const Text('正在加载 YouTube 首页推荐视频...'),
-                ],
-              ),
-            )
+          ? const FeedInitialLoading(message: '正在加载 YouTube 首页推荐视频...')
           : _errorMessage != null && _sections.isEmpty
           ? ErrorStateWidget(
               errorMessage: _errorMessage!,
               onRetry: _loadHomeFeed,
             )
-          : RefreshIndicator(
-              onRefresh: () => _loadHomeFeed(rebuildFeed: true),
+          : FeedRefreshIndicator(
+              onRefresh: _loadHomeFeed,
               child: ListView.builder(
                 key: PageStorageKey<String>('home-feed-$_feedLayoutGeneration'),
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -353,7 +378,7 @@ class _HomePageState extends State<HomePage> {
                   if (index == _sections.length) {
                     return KeyedSubtree(
                       key: const ValueKey<String>('home-feed-status'),
-                      child: _HomeFeedStatus(
+                      child: FeedContinuationStatus(
                         isLoading: _isLoading,
                         errorMessage: _errorMessage,
                         onRetry: _loadHomeFeed,
@@ -362,9 +387,10 @@ class _HomePageState extends State<HomePage> {
                   }
                   final section = _sections[index];
                   final sectionKey = sectionKeys[index];
-                  return _HomeFeedSection(
+                  return VideoSectionRow(
                     key: ValueKey<String>(sectionKey),
                     sectionKey: sectionKey,
+                    itemKeyPrefix: 'home-item',
                     section: section,
                     cardWidth: cardWidth,
                     rowHeight: rowHeight,
@@ -381,270 +407,6 @@ class _HomePageState extends State<HomePage> {
                 },
               ),
             ),
-    );
-  }
-}
-
-class _HomeFeedSection extends StatelessWidget {
-  final String sectionKey;
-  final VideoSection section;
-  final double cardWidth;
-  final double rowHeight;
-  final ScrollController scrollController;
-  final bool isLoadingMore;
-  final String? errorMessage;
-  final VoidCallback onLoadMore;
-  final VoidCallback onOpenSection;
-  final ValueChanged<Video> onVideoTap;
-
-  const _HomeFeedSection({
-    super.key,
-    required this.sectionKey,
-    required this.section,
-    required this.cardWidth,
-    required this.rowHeight,
-    required this.scrollController,
-    required this.isLoadingMore,
-    required this.errorMessage,
-    required this.onLoadMore,
-    required this.onOpenSection,
-    required this.onVideoTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (section.title != null && section.title!.trim().isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
-            child: Text(
-              section.title!,
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        SizedBox(
-          height: rowHeight,
-          child: NotificationListener<ScrollNotification>(
-            onNotification: (notification) {
-              final isNearEnd = notification.metrics.extentAfter < 560;
-              final shouldCheckEnd =
-                  notification is ScrollUpdateNotification ||
-                  notification is OverscrollNotification ||
-                  notification is ScrollMetricsNotification;
-              if (notification.metrics.axis == Axis.horizontal &&
-                  section.browseId == null &&
-                  shouldCheckEnd &&
-                  isNearEnd) {
-                onLoadMore();
-              }
-              return false;
-            },
-            child: ListView.builder(
-              controller: scrollController,
-              key: PageStorageKey<String>(sectionKey),
-              scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.zero,
-              itemCount:
-                  section.videos.length +
-                  (section.browseId != null ||
-                          isLoadingMore ||
-                          errorMessage != null
-                      ? 1
-                      : 0),
-              itemBuilder: (context, videoIndex) {
-                if (videoIndex == section.videos.length) {
-                  if (section.browseId != null) {
-                    return _SectionBrowseCard(
-                      cardWidth: cardWidth,
-                      title: section.browseTitle!,
-                      onTap: onOpenSection,
-                    );
-                  }
-                  return _SectionLoadMoreCard(
-                    cardWidth: cardWidth,
-                    isLoading: isLoadingMore,
-                    errorMessage: errorMessage,
-                    onRetry: onLoadMore,
-                  );
-                }
-
-                final video = section.videos[videoIndex];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: SizedBox(
-                    width: cardWidth,
-                    child: video.thumbnailUrl.isEmpty
-                        ? _SectionBrowseCard(
-                            cardWidth: cardWidth,
-                            title: video.title,
-                            onTap: () => onVideoTap(video),
-                          )
-                        : VideoCard(
-                            key: ValueKey<String>(
-                              'home-item-${video.id ?? video.browseId}-$videoIndex',
-                            ),
-                            video: video,
-                            onTap: () => onVideoTap(video),
-                          ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 20),
-      ],
-    );
-  }
-}
-
-class _SectionLoadMoreCard extends StatelessWidget {
-  final double cardWidth;
-  final bool isLoading;
-  final String? errorMessage;
-  final VoidCallback onRetry;
-
-  const _SectionLoadMoreCard({
-    required this.cardWidth,
-    required this.isLoading,
-    required this.errorMessage,
-    required this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: cardWidth,
-      child: Card(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: isLoading
-                ? const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 8),
-                      Text('正在加载本栏更多视频...'),
-                    ],
-                  )
-                : errorMessage != null
-                ? SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          errorMessage!,
-                          style: TextStyle(color: colorScheme.error),
-                        ),
-                        TextButton.icon(
-                          onPressed: onRetry,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('重试'),
-                        ),
-                      ],
-                    ),
-                  )
-                : TextButton.icon(
-                    onPressed: onRetry,
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text('更多...'),
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionBrowseCard extends StatelessWidget {
-  final double cardWidth;
-  final String title;
-  final VoidCallback onTap;
-
-  const _SectionBrowseCard({
-    required this.cardWidth,
-    required this.title,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: cardWidth,
-      child: Card(
-        child: Center(
-          child: TextButton.icon(
-            onPressed: onTap,
-            icon: const Icon(Icons.open_in_new),
-            label: Text(title),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HomeFeedStatus extends StatelessWidget {
-  final bool isLoading;
-  final String? errorMessage;
-  final VoidCallback onRetry;
-
-  const _HomeFeedStatus({
-    required this.isLoading,
-    required this.errorMessage,
-    required this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    if (isLoading) {
-      return const SizedBox(
-        height: 112,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 8),
-              Text('正在加载更多首页分区...'),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '首页后续内容加载失败',
-            style: theme.textTheme.titleSmall?.copyWith(
-              color: colorScheme.error,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          SelectableText(errorMessage ?? ''),
-          const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('重新加载'),
-          ),
-        ],
-      ),
     );
   }
 }

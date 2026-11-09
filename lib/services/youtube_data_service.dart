@@ -14,6 +14,11 @@ typedef _HomeRequestConfig = ({
   Map<String, dynamic> context,
 });
 
+typedef MusicBrowsePage = ({
+  List<VideoSection> sections,
+  String? continuationToken,
+});
+
 /// Real YouTube InnerTube API Data Service
 /// Strictly matches SmartTube V2 MediaServiceCore (QueryBuilder.kt / BrowseService2.kt / TVHTML5 Client).
 class YouTubeDataService {
@@ -22,6 +27,7 @@ class YouTubeDataService {
   YouTubeDataService._internal();
 
   static const String _apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+  static const String _musicBrowseId = 'FEtopics_music';
 
   /// Fetch Real Home Feed Videos strictly using SmartTube TVHTML5 Client & QueryBuilder JSON
   Future<List<VideoSection>> fetchHomeFeed() async {
@@ -125,6 +131,94 @@ class YouTubeDataService {
       destination,
       json.decode(response.body),
     );
+  }
+
+  Future<MusicBrowsePage> fetchMusicFeed() async {
+    final request = await _createHomeRequestConfig();
+    final response = await http
+        .post(
+          request.uri,
+          headers: request.headers,
+          body: json.encode({
+            'context': request.context,
+            'browseId': _musicBrowseId,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'YouTube TVHTML5 音乐分区接口响应异常 '
+        '[HTTP ${response.statusCode}]: ${_shortMsg(response.body)}',
+      );
+    }
+
+    return parseMusicBrowseResponse(json.decode(response.body));
+  }
+
+  Future<MusicBrowsePage> fetchMoreMusicSections(String continuation) async {
+    if (continuation.isEmpty) {
+      throw ArgumentError('YouTube 音乐 section-list continuation 不能为空');
+    }
+
+    final request = await _createHomeRequestConfig();
+    final response = await http
+        .post(
+          request.uri,
+          headers: request.headers,
+          body: json.encode({
+            'context': request.context,
+            'continuation': continuation,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'YouTube TVHTML5 音乐分区 continuation 响应异常 '
+        '[HTTP ${response.statusCode}]: ${_shortMsg(response.body)}',
+      );
+    }
+
+    return parseMusicBrowseContinuationResponse(json.decode(response.body));
+  }
+
+  Stream<MusicBrowsePage> fetchMusicFeedProgressively() async* {
+    final firstPage = await fetchMusicFeed();
+    yield* streamMusicBrowsePages(firstPage, fetchMoreMusicSections);
+  }
+
+  @visibleForTesting
+  Stream<MusicBrowsePage> streamMusicBrowsePages(
+    MusicBrowsePage firstPage,
+    Future<MusicBrowsePage> Function(String continuation) fetchMore,
+  ) async* {
+    final sections = List<VideoSection>.of(firstPage.sections);
+    var continuation = firstPage.continuationToken;
+    final seenTokens = <String>{};
+
+    yield (
+      sections: List.unmodifiable(sections),
+      continuationToken: continuation,
+    );
+
+    while (continuation != null && continuation.isNotEmpty) {
+      if (!seenTokens.add(continuation)) {
+        throw const FormatException(
+          'YouTube 音乐 section-list continuation token 重复',
+        );
+      }
+
+      final nextPage = await fetchMore(continuation);
+      if (nextPage.sections.isEmpty) break;
+
+      sections.addAll(nextPage.sections);
+      continuation = nextPage.continuationToken;
+      yield (
+        sections: List.unmodifiable(sections),
+        continuationToken: continuation,
+      );
+    }
   }
 
   Future<VideoSection> fetchMoreBrowseDestinationVideos(
@@ -389,6 +483,38 @@ class YouTubeDataService {
       videos: videos,
       continuationToken: continuationToken,
     );
+  }
+
+  @visibleForTesting
+  MusicBrowsePage parseMusicBrowseResponse(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('YouTube TVHTML5 音乐响应不是 JSON 对象');
+    }
+
+    final sectionList = _initialSectionList(data);
+    final rawShelves = sectionList?['contents'];
+    if (rawShelves is! List) {
+      throw const FormatException(
+        'YouTube TVHTML5 音乐响应缺少 sectionListRenderer.contents',
+      );
+    }
+
+    final sections = _parseHomeShelves(rawShelves);
+    if (sections.isEmpty) {
+      throw const FormatException('YouTube TVHTML5 音乐响应中没有可解析的内容分区');
+    }
+
+    return (
+      sections: sections,
+      continuationToken: _homeSectionListContinuationToken(sectionList),
+    );
+  }
+
+  @visibleForTesting
+  MusicBrowsePage parseMusicBrowseContinuationResponse(dynamic data) {
+    final sections = parseHomeContinuationResponse(data);
+    final continuationToken = extractHomeSectionContinuationToken(data);
+    return (sections: sections, continuationToken: continuationToken);
   }
 
   @visibleForTesting
@@ -735,6 +861,7 @@ class YouTubeDataService {
         'gridVideoRenderer',
         'compactVideoRenderer',
         'playlistVideoRenderer',
+        'tvMusicVideoRenderer',
       ].where(node.containsKey).toList();
       if (rendererKeys.length > 1 ||
           (rendererKeys.isNotEmpty && node.containsKey('tileRenderer'))) {
@@ -743,10 +870,10 @@ class YouTubeDataService {
         );
       }
       if (rendererKeys.isNotEmpty) {
-        final video = _parseVideoRenderer(
-          node[rendererKeys.single],
-          sectionTitle,
-        );
+        final renderer = node[rendererKeys.single];
+        final video = rendererKeys.single == 'tvMusicVideoRenderer'
+            ? _parseMusicVideoRenderer(renderer, sectionTitle)
+            : _parseVideoRenderer(renderer, sectionTitle);
         if (!result.any((item) => item.id == video.id)) result.add(video);
         return;
       }
@@ -807,7 +934,7 @@ class YouTubeDataService {
       node.length == 1 &&
       node['gridButtonRenderer'] is Map<String, dynamic>;
 
-  String _extractGridButtonContinuation(dynamic rawButton) {
+  String? _extractGridButtonContinuation(dynamic rawButton) {
     if (rawButton is! Map<String, dynamic>) {
       throw const FormatException('YouTube gridButtonRenderer 格式无效');
     }
@@ -821,7 +948,23 @@ class YouTubeDataService {
         'YouTube gridButtonRenderer「$title」缺少 navigationEndpoint',
       );
     }
+
+    final signalEndpoint = navigation['signalServiceEndpoint'];
     final reloadCommand = navigation['loadReloadContinuationCommand'];
+    if (signalEndpoint != null) {
+      if (signalEndpoint is! Map<String, dynamic>) {
+        throw FormatException(
+          'YouTube gridButtonRenderer「$title」的 signalServiceEndpoint 格式无效',
+        );
+      }
+      if (reloadCommand != null) {
+        throw FormatException(
+          'YouTube gridButtonRenderer「$title」同时包含 signal 和 reload 命令',
+        );
+      }
+      return null;
+    }
+
     if (reloadCommand is! Map<String, dynamic>) {
       throw FormatException(
         'YouTube gridButtonRenderer「$title」缺少 loadReloadContinuationCommand；'
@@ -906,6 +1049,67 @@ class YouTubeDataService {
     );
   }
 
+  Video _parseMusicVideoRenderer(dynamic renderer, String sectionTitle) {
+    if (renderer is! Map<String, dynamic>) {
+      throw const FormatException('YouTube tvMusicVideoRenderer 格式无效');
+    }
+
+    final title = _extractText(renderer['primaryText']);
+    if (title == null || title.trim().isEmpty) {
+      throw const FormatException(
+        'YouTube tvMusicVideoRenderer 缺少 primaryText',
+      );
+    }
+
+    final navigationEndpoint = renderer['navigationEndpoint'];
+    final watchEndpoint = navigationEndpoint is Map<String, dynamic>
+        ? navigationEndpoint['watchEndpoint']
+        : null;
+    if (watchEndpoint is! Map<String, dynamic>) {
+      throw FormatException(
+        'YouTube tvMusicVideoRenderer「$title」缺少 navigationEndpoint.watchEndpoint',
+      );
+    }
+
+    final videoId = watchEndpoint['videoId']?.toString();
+    if (videoId == null || videoId.isEmpty) {
+      throw FormatException(
+        'YouTube tvMusicVideoRenderer「$title」缺少 watchEndpoint.videoId',
+      );
+    }
+
+    final thumbnailUrl = _extractThumbnail(renderer['thumbnail']);
+    if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+      throw FormatException(
+        'YouTube 音乐视频 $videoId 缺少缩略图地址；'
+        'renderer 字段：${renderer.keys.toList()}',
+      );
+    }
+
+    final playlistId = watchEndpoint['playlistId']?.toString();
+    final playlistQuery = playlistId == null || playlistId.isEmpty
+        ? ''
+        : '&list=$playlistId';
+
+    return Video(
+      id: videoId,
+      itemType: VideoItemType.video,
+      playlistId: playlistId,
+      title: title,
+      channelName: _extractText(renderer['secondaryText']) ?? '',
+      channelAvatar: '',
+      views: _extractText(renderer['tertiaryText']) ?? '',
+      uploadTime: '',
+      duration: _extractText(renderer['lengthText']) ?? '',
+      thumbnailUrl: thumbnailUrl,
+      videoUrl: 'https://www.youtube.com/watch?v=$videoId$playlistQuery',
+      categoryId: 'music',
+      categoryName: sectionTitle,
+      description: title,
+      likesCount: 0,
+    );
+  }
+
   /// Parse Cobalt / TVHTML5 tileRenderer
   Video _parseTileRenderer(dynamic renderer, String sectionTitle) {
     if (renderer is! Map<String, dynamic>) {
@@ -913,10 +1117,13 @@ class YouTubeDataService {
     }
 
     final contentType = renderer['contentType'];
-    final command = renderer['onSelectCommand'];
-    if (command is! Map<String, dynamic>) {
+    final rawCommand = renderer['onSelectCommand'];
+    if (rawCommand is! Map<String, dynamic>) {
       throw const FormatException('YouTube tile 缺少 onSelectCommand');
     }
+    final command = contentType == 'TILE_CONTENT_TYPE_VIDEO'
+        ? _unwrapVideoTileCommandExecutor(rawCommand)
+        : rawCommand;
     final itemType = switch (contentType) {
       'TILE_CONTENT_TYPE_VIDEO' => _videoTileTypeFromEndpoint(command),
       'TILE_CONTENT_TYPE_SHORTS' => VideoItemType.shorts,
@@ -957,6 +1164,12 @@ class YouTubeDataService {
       videoId = endpoint['videoId']?.toString();
       if (videoId == null || videoId.isEmpty) {
         throw FormatException('YouTube $contentType tile 缺少 videoId');
+      }
+      if (itemType == VideoItemType.video) {
+        final endpointPlaylistId = endpoint['playlistId']?.toString();
+        if (endpointPlaylistId != null && endpointPlaylistId.isNotEmpty) {
+          playlistId = endpointPlaylistId;
+        }
       }
     } else if (itemType == VideoItemType.playlist) {
       final hasBrowseEndpoint = command['browseEndpoint'] != null;
@@ -1080,7 +1293,7 @@ class YouTubeDataService {
           ? ''
           : itemType == VideoItemType.shorts
           ? 'https://www.youtube.com/shorts/$videoId'
-          : playlistId == null
+          : playlistId == null || playlistId.isEmpty
           ? 'https://www.youtube.com/watch?v=$videoId'
           : Uri.https('www.youtube.com', '/watch', {
               'v': videoId,
@@ -1130,7 +1343,8 @@ class YouTubeDataService {
     if (endpoints.length != 1) {
       throw FormatException(
         'YouTube VIDEO tile 必须且只能包含一个播放或浏览 endpoint；'
-        '实际字段：${command.keys.toList()}',
+        '实际字段：${command.keys.toList()}；'
+        '脱敏结构：${_describeJsonShape(command)}',
       );
     }
 
@@ -1142,6 +1356,78 @@ class YouTubeDataService {
         'Unreachable video tile endpoint: ${endpoints.single}',
       ),
     };
+  }
+
+  Map<String, dynamic> _unwrapVideoTileCommandExecutor(
+    Map<String, dynamic> command,
+  ) {
+    final rawExecutor = command['commandExecutorCommand'];
+    if (rawExecutor == null) return command;
+    if (rawExecutor is! Map<String, dynamic> ||
+        rawExecutor.keys.any((key) => key != 'commands')) {
+      throw FormatException(
+        'YouTube VIDEO tile commandExecutorCommand 格式无效；'
+        '脱敏结构：${_describeJsonShape(command)}',
+      );
+    }
+
+    final commands = rawExecutor['commands'];
+    if (commands is! List) {
+      throw FormatException(
+        'YouTube VIDEO tile commandExecutorCommand 缺少 commands 列表；'
+        '脱敏结构：${_describeJsonShape(command)}',
+      );
+    }
+
+    const endpointNames = {
+      'watchEndpoint',
+      'reelWatchEndpoint',
+      'browseEndpoint',
+    };
+    final endpoints = <MapEntry<String, dynamic>>[];
+    for (var index = 0; index < commands.length; index++) {
+      final action = commands[index];
+      if (action is! Map<String, dynamic>) {
+        throw FormatException(
+          'YouTube VIDEO tile commandExecutorCommand.commands[$index] 格式无效；'
+          '实际类型：${action.runtimeType}',
+        );
+      }
+
+      final actionKeys = action.keys
+          .where((key) => key != 'clickTrackingParams')
+          .toList();
+      final actionEndpoints = actionKeys.where(endpointNames.contains).toList();
+      if (actionEndpoints.length == 1 && actionKeys.length == 1) {
+        final endpointName = actionEndpoints.single;
+        endpoints.add(MapEntry(endpointName, action[endpointName]));
+        continue;
+      }
+
+      if (actionEndpoints.isEmpty &&
+          actionKeys.length == 1 &&
+          actionKeys.single == 'feedbackEndpoint' &&
+          action['feedbackEndpoint'] is Map<String, dynamic>) {
+        continue;
+      }
+
+      throw FormatException(
+        'YouTube VIDEO tile commandExecutorCommand.commands[$index] '
+        '包含不支持或冲突的动作；实际字段：${action.keys.toList()}；'
+        '脱敏结构：${_describeJsonShape(action)}',
+      );
+    }
+
+    if (endpoints.length != 1) {
+      throw FormatException(
+        'YouTube VIDEO tile commandExecutorCommand 必须且只能包含一个播放或浏览 endpoint；'
+        '识别到 ${endpoints.length} 个 ${endpoints.map((endpoint) => endpoint.key).toList()}；'
+        '脱敏结构：${_describeJsonShape(command)}',
+      );
+    }
+
+    final endpoint = endpoints.single;
+    return {endpoint.key: endpoint.value};
   }
 
   VideoItemType _browseEndpointTileType(dynamic rawEndpoint) {

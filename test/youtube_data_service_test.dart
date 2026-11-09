@@ -244,6 +244,61 @@ void main() {
     );
   });
 
+  test(
+    'ignores signal-service refresh controls in music section continuation',
+    () {
+      final response = {
+        'continuationContents': {
+          'sectionListContinuation': {
+            'contents': [
+              _shelf('More music', [
+                {
+                  'tileRenderer': _tile(
+                    videoId: 'continued-music-video',
+                    title: 'Continued music video',
+                    thumbnailUrl: 'https://example.test/continued-music.jpg',
+                  ),
+                },
+              ]),
+              _shelf(null, [
+                {
+                  'gridButtonRenderer': {
+                    'title': {'simpleText': '刷新'},
+                    'icon': {'iconType': 'REFRESH'},
+                    'navigationEndpoint': {
+                      'clickTrackingParams': 'refresh-click-tracking',
+                      'signalServiceEndpoint': {
+                        'signal': 'CLIENT_SIGNAL',
+                        'actions': <dynamic>[],
+                      },
+                    },
+                  },
+                },
+              ]),
+            ],
+            'continuations': [
+              {
+                'nextContinuationData': {
+                  'continuation': 'next-music-section-token',
+                },
+              },
+            ],
+          },
+        },
+      };
+
+      final sections = service.parseHomeContinuationResponse(response);
+
+      expect(sections.length, 1);
+      expect(sections.single.title, 'More music');
+      expect(sections.single.videos.single.id, 'continued-music-video');
+      expect(
+        service.extractHomeSectionContinuationToken(response),
+        'next-music-section-token',
+      );
+    },
+  );
+
   test('parses browse destination items and page continuation', () {
     final destination = VideoSection(
       title: 'Music',
@@ -277,6 +332,151 @@ void main() {
     expect(page.videos.single.id, 'music-1');
     expect(page.continuationToken, 'browse-next');
   });
+
+  test('parses SmartTube Music shelves and TV music video renderers', () {
+    final response = _homeResponse([
+      _shelf('Music for Every Mood', [
+        {
+          'tvMusicVideoRenderer': {
+            'primaryText': {'simpleText': 'Music video title'},
+            'secondaryText': {'simpleText': 'Artist name'},
+            'tertiaryText': {'simpleText': '98M views • 2 months ago'},
+            'lengthText': {'simpleText': '4:36'},
+            'navigationEndpoint': {
+              'watchEndpoint': {
+                'videoId': 'music-video-id',
+                'playlistId': 'RDmusic-video-id',
+              },
+            },
+            'thumbnail': {
+              'thumbnails': [
+                {
+                  'url': 'https://example.test/music-video.jpg',
+                  'width': 320,
+                  'height': 180,
+                },
+              ],
+            },
+          },
+        },
+      ], continuationToken: 'music-row-next'),
+      _shelf('New releases', [
+        {
+          'tvMusicVideoRenderer': {
+            'primaryText': {'simpleText': 'Another music video'},
+            'navigationEndpoint': {
+              'watchEndpoint': {'videoId': 'another-music-video'},
+            },
+            'thumbnail': {
+              'thumbnails': [
+                {'url': 'https://example.test/another.jpg'},
+              ],
+            },
+          },
+        },
+      ]),
+    ]);
+    final sectionList =
+        response['contents']['tvBrowseRenderer']['content']['tvSurfaceContentRenderer']['content']['sectionListRenderer'];
+    sectionList['continuations'] = [
+      {
+        'nextContinuationData': {'continuation': 'music-sections-next'},
+      },
+    ];
+
+    final page = service.parseMusicBrowseResponse(response);
+
+    expect(page.sections.map((section) => section.title), [
+      'Music for Every Mood',
+      'New releases',
+    ]);
+    expect(page.continuationToken, 'music-sections-next');
+    expect(page.sections.first.continuationToken, 'music-row-next');
+
+    final musicVideo = page.sections.first.videos.single;
+    expect(musicVideo.itemType, VideoItemType.video);
+    expect(musicVideo.id, 'music-video-id');
+    expect(musicVideo.playlistId, 'RDmusic-video-id');
+    expect(musicVideo.title, 'Music video title');
+    expect(musicVideo.channelName, 'Artist name');
+    expect(musicVideo.views, '98M views • 2 months ago');
+    expect(musicVideo.duration, '4:36');
+    expect(
+      musicVideo.videoUrl,
+      'https://www.youtube.com/watch?v=music-video-id&list=RDmusic-video-id',
+    );
+  });
+
+  test(
+    'parses Music section-list continuation independently of row tokens',
+    () {
+      final page = service.parseMusicBrowseContinuationResponse({
+        'continuationContents': {
+          'sectionListContinuation': {
+            'contents': [
+              _shelf('More music', [
+                {
+                  'tileRenderer': _tile(
+                    videoId: 'more-music-video',
+                    title: 'More music video',
+                    thumbnailUrl: 'https://example.test/more-music.jpg',
+                  ),
+                },
+              ]),
+            ],
+            'continuations': [
+              {
+                'nextContinuationData': {'continuation': 'next-music-sections'},
+              },
+            ],
+          },
+        },
+      });
+
+      expect(page.sections.single.title, 'More music');
+      expect(page.sections.single.videos.single.id, 'more-music-video');
+      expect(page.continuationToken, 'next-music-sections');
+    },
+  );
+
+  test(
+    'progressively emits Music shelves and stops on an empty page',
+    () async {
+      final firstSection = VideoSection(
+        title: 'First music shelf',
+        videos: const [],
+      );
+      final nextSections = [
+        const VideoSection(title: 'Second music shelf', videos: []),
+        const VideoSection(title: 'Third music shelf', videos: []),
+      ];
+      final requestedTokens = <String>[];
+
+      final pages = await service.streamMusicBrowsePages(
+        (sections: [firstSection], continuationToken: 'music-page-1'),
+        (continuation) async {
+          requestedTokens.add(continuation);
+          if (continuation == 'music-page-1') {
+            return (sections: nextSections, continuationToken: 'music-page-2');
+          }
+          return (sections: const <VideoSection>[], continuationToken: null);
+        },
+      ).toList();
+
+      expect(requestedTokens, ['music-page-1', 'music-page-2']);
+      expect(pages.map((page) => page.sections.length), [1, 3]);
+      expect(
+        pages.map(
+          (page) => page.sections.map((section) => section.title).toList(),
+        ),
+        [
+          ['First music shelf'],
+          ['First music shelf', 'Second music shelf', 'Third music shelf'],
+        ],
+      );
+      expect(pages.last.continuationToken, 'music-page-2');
+    },
+  );
 
   test('appends browse destination continuation items', () {
     final initial = VideoSection(
@@ -916,6 +1116,132 @@ void main() {
     expect(item.id, 'audio-video-id');
   });
 
+  test('unwraps one video endpoint and a feedback sidecar command', () {
+    final tile = _tile(
+      videoId: 'wrapped-video-id',
+      title: 'Wrapped video',
+      thumbnailUrl: 'https://example.test/wrapped-video.jpg',
+    );
+    tile['onSelectCommand'] = {
+      'clickTrackingParams': 'tracking-value',
+      'commandExecutorCommand': {
+        'commands': [
+          {
+            'clickTrackingParams': 'video-tracking-value',
+            'watchEndpoint': {
+              'videoId': 'wrapped-video-id',
+              'playlistId': 'RDwrapped-video',
+              'params': 'playlist-params',
+              'playerParams': 'player-params',
+              'watchEndpointSupportedOnesieConfig': <String, dynamic>{},
+            },
+          },
+          {
+            'clickTrackingParams': 'feedback-tracking-value',
+            'feedbackEndpoint': {
+              'feedbackToken': 'feedback-token',
+              'uiActions': <String, dynamic>{},
+            },
+          },
+        ],
+      },
+    };
+
+    final item = service
+        .parseHomeFeedResponse(
+          _homeResponse([
+            _shelf('Recommended', [
+              {'tileRenderer': tile},
+            ]),
+          ]),
+        )
+        .single
+        .videos
+        .single;
+
+    expect(item.itemType, VideoItemType.video);
+    expect(item.id, 'wrapped-video-id');
+    expect(item.playlistId, 'RDwrapped-video');
+    expect(
+      item.videoUrl,
+      'https://www.youtube.com/watch?v=wrapped-video-id&list=RDwrapped-video',
+    );
+  });
+
+  test('rejects multiple endpoints in a video command executor', () {
+    final tile = _tile(
+      videoId: 'wrapped-video-id',
+      title: 'Ambiguous video',
+      thumbnailUrl: 'https://example.test/wrapped-video.jpg',
+    );
+    tile['onSelectCommand'] = {
+      'commandExecutorCommand': {
+        'commands': [
+          {
+            'watchEndpoint': {'videoId': 'wrapped-video-id'},
+          },
+          {
+            'browseEndpoint': {'browseId': 'browse-destination'},
+          },
+        ],
+      },
+    };
+
+    expect(
+      () => service.parseHomeFeedResponse(
+        _homeResponse([
+          _shelf('Ambiguous', [
+            {'tileRenderer': tile},
+          ]),
+        ]),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('识别到 2 个'),
+        ),
+      ),
+    );
+  });
+
+  test('rejects unknown sidecar commands in a video command executor', () {
+    final tile = _tile(
+      videoId: 'wrapped-video-id',
+      title: 'Unknown action video',
+      thumbnailUrl: 'https://example.test/wrapped-video.jpg',
+    );
+    tile['onSelectCommand'] = {
+      'commandExecutorCommand': {
+        'commands': [
+          {
+            'watchEndpoint': {'videoId': 'wrapped-video-id'},
+          },
+          {
+            'signalAction': {'signal': 'unknown'},
+          },
+        ],
+      },
+    };
+
+    expect(
+      () => service.parseHomeFeedResponse(
+        _homeResponse([
+          _shelf('Unknown action', [
+            {'tileRenderer': tile},
+          ]),
+        ]),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('signalAction'),
+        ),
+      ),
+    );
+  });
+
   test('treats a video tile with reelWatchEndpoint as Shorts', () {
     final item = service
         .parseHomeFeedResponse(
@@ -1184,7 +1510,7 @@ Map<String, dynamic> _shelf(
               'navigationEndpoint': {
                 'browseEndpoint': {
                   'browseId': browseId,
-                  if (browseParams != null) 'params': browseParams,
+                  'params': ?browseParams,
                 },
               },
             },
@@ -1214,18 +1540,18 @@ Map<String, dynamic> _tile({
   bool titleInOverlay = false,
   String? browseId,
 }) => {
-  if (contentType != null) 'contentType': contentType,
+  'contentType': ?contentType,
   'onSelectCommand': switch (contentType) {
     'TILE_CONTENT_TYPE_TRACK' ||
     'TILE_CONTENT_TYPE_PLAYLIST' ||
     'TILE_CONTENT_TYPE_CHANNEL' => {
-      'browseEndpoint': {if (browseId != null) 'browseId': browseId},
+      'browseEndpoint': {'browseId': ?browseId},
     },
     _ => {
       if (useReelEndpoint)
-        'reelWatchEndpoint': {if (videoId != null) 'videoId': videoId}
+        'reelWatchEndpoint': {'videoId': ?videoId}
       else
-        'watchEndpoint': {if (videoId != null) 'videoId': videoId},
+        'watchEndpoint': {'videoId': ?videoId},
     },
   },
   if (!titleInOverlay)
