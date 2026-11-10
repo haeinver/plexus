@@ -19,6 +19,7 @@
 - [lib/main.dart](lib/main.dart)、[lib/app.dart](lib/app.dart)：应用启动和根 widget。
 - [lib/pages/home/home_page.dart](lib/pages/home/home_page.dart)：首页 progressive feed、横栏 UI、横向单栏续载及条目导航。
 - [lib/pages/home/browse_destination_page.dart](lib/pages/home/browse_destination_page.dart)：browse endpoint 目的页及其列表续载；可通过 `destinationType` 标识 playlist、track、channel 或通用 browse 页面。
+- [lib/pages/home/item_destination_pages.dart](lib/pages/home/item_destination_pages.dart)：playlist、track、channel、browse entry MVP 页面及共享 `VideoItemType` 点击路由；首页、Browse 列表和分类音乐卡片共用 `openVideoItemDestination()`。
 - [lib/services/youtube_data_service.dart](lib/services/youtube_data_service.dart)：TVHTML5 请求、renderer 解析及全局/单栏 continuation。
 - [lib/models/video.dart](lib/models/video.dart)：首页条目及路由语义。
 - [lib/models/video_section.dart](lib/models/video_section.dart)：首页栏/浏览页的数据和 continuation 状态。
@@ -55,9 +56,9 @@ flutter analyze
 
 - 普通 `video` 仍进入既有 `VideoDetailPage`；直播/预告状态优先进入 `LiveEventDetailPage`。
 - `shorts` 进入 `ShortsDetailPage`，用竖屏 poster 展示标题/频道；它不伪称已经连接真实视频流。
-- playlist、track、channel、browse destination 都进入 `BrowseDestinationPage`，并传入 `destinationType` 显示相应身份头和真实 browse 结果。
+- `track`、`playlist`、`channel`、`browseDestination` 分别进入 `TrackDetailPage`、`PlaylistDetailPage`、`ChannelDetailPage`、`BrowseEntryDetailPage`。
 - 这几类目的页是可进入的 MVP，不代表已实现订阅、播放队列、音乐播放器等完整业务。只展示源数据真实提供的标题、缩略图和必要 endpoint 信息，不造播放量、订阅数或列表内容。
-- 首页和 Browse destination 两处都必须沿用类型路由。新增 `VideoItemType` 时，要同时更新两处 switch、目的页类型头和 widget/parser 测试。
+- 首页、Browse 列表和分类音乐 feed 必须共用 `openVideoItemDestination()`，不能根据当前页面把同一种 `VideoItemType` 路由到不同目标。新增 `VideoItemType` 时，更新共享路由 helper、Browse 目的页类型头和 widget/parser 测试。
 
 ### Endpoint 分类规则
 
@@ -78,6 +79,8 @@ flutter analyze
 
 首页响应路径为 `tvBrowseRenderer → tvSurfaceContentRenderer → sectionListRenderer`。后续响应可能是顶层 `sectionListContinuation`，也可能是 `tvSurfaceContentContinuation.content.sectionListRenderer`；它包含多条 shelf，每条 shelf 有自己的原生标题和一组条目。
 
+音乐首栏可能通过 `headerRenderer.heroCarouselHeaderRenderer.header.shelfHeaderRenderer.title` 提供标题，而不是 shelf 直接标题或常规 `headerRenderer.shelfHeaderRenderer.title`。解析时读取该原生路径；不要因首栏无常规 shelf header 就生成标题或丢掉真实标题。
+
 `fetchHomeFeedProgressively()` 负责按首页级 token 请求并逐步 yield 新的有标题 sections。全局 token 的来源遵循 SmartTube `SectionListContinuation.getContinuationToken()` 语义：先读 section-list 自身 `continuations`，必要时读第一条 shelf 的 horizontal continuation。**不得把任意 `gridButtonRenderer.loadReloadContinuationCommand` 提升为全局首页 token。**某些 refresh-only 按钮只是控制项；若把它当 root token 循环请求，会造成首页不断追加横栏。
 
 只含已知 reload 控制项的 shelf 不显示为 section，不得生成无标题横栏。首页纵向 `ListView` 只呈现已经拿到的 sections；纵向滚动不应直接发起横栏 continuation 请求。若用户报告“向上滑无限增加横栏”，先查全局 token 来源和 `fetchHomeFeedProgressively()` 循环，不要先改纵向列表触发器。
@@ -88,6 +91,8 @@ flutter analyze
 
 单栏 continuation 解析需支持实际响应中的 `horizontalListContinuation`、grid/playlist renderer，以及 TV surface 下的 grid/section-list 外壳。多 shelf 的条目合并到当前组时应保留并去重现有 item，token 取自对应 continuation 数据。不要把这两种 continuation 混为同一 UI 动作。
 
+实机曾观察到 HTTP 200 的横向 continuation 响应只有 `responseContext` 和 `trackingParams`，没有列表或下一页数据；不要把它当作正常结束并清除 token，否则会隐藏续载失败。SmartTube `AppClient.TV.browseTemplate` 提供 `tvAppInfo`、`webpSupport`、`animatedWebpSupport`，`QueryBuilder` 在 visitor data 可用时也会放入 `context.client.visitorData`；其所有 browse continuation POST 还会带 `racyCheckOk: true` 和 `contentCheckOk: true`。本项目应匹配这些 TV browse context 字段，并从响应的 `responseContext.visitorData` 更新后续请求。若响应仍是 metadata-only，应继续展示脱敏结构错误并检查 token/请求上下文，不要把失败伪装成栏位耗尽。
+
 栏头 `moreContentButton` 是另一种语义：它含 `browseEndpoint` 时表示进入目的页，可渲染为栏尾 browse 入口。它不等于 continuation token，也不能因为它存在就自动启动无限分页。
 
 ## 错误和非媒体节点
@@ -95,7 +100,7 @@ flutter analyze
 - 解析结构不完整或未知时抛出 `FormatException`，错误应包含 renderer/endpoint 的字段名和可用的脱敏结构；不要记录认证 header、token 或其他秘密值。
 - 不要把 browse-only item 改成 video，不要补造 `videoId`、标题或缩略图，也不要把错误转换成空视频列表。
 - 已知非媒体结构要显式处理：`adSlotRenderer`、`continuationItemRenderer`、已确认的 `appealSurveyShelfRenderer`。这不是通用 catch-all；其他未知 renderer 继续报错。
-- `gridButtonRenderer` 需检查具体 navigation command。`signalServiceEndpoint`/soft reload 与真正 continuation 不是同一个动作；不能只看按钮标题“更多”或“刷新”就决定行为。
+- `gridButtonRenderer` 需检查具体 navigation command。`signalServiceEndpoint`/soft reload 与真正 continuation 不是同一个动作；不能只看按钮标题“更多”或“刷新”就决定行为。已由实机确认 `clientActionEndpoint.action.actionType == OPEN_SIGN_IN_PROMPT` 是登录提示控制项，可显式忽略且不能产生 continuation token；其他 client action 仍按未知动作报错。
 - `commandExecutorCommand` 只按已确认的 renderer 上下文和命令类型处理；错误上下文可用 `_describeJsonShape` 输出字段名/类型，禁止输出 tracking 参数、ID、token 或原始秘密值。
 - 加载失败应留在页面上并显示真实错误，不能静默退回 mock 数据。
 
@@ -141,5 +146,5 @@ adb pull /sdcard/plexus_screen.png "$env:TEMP\plexus_screen.png"
 - 当前实现区分 item endpoint 类型、全局 section-list continuation、单栏 horizontal continuation，以及 reload-only 控制项。
 - `TILE_CONTENT_TYPE_VIDEO` 已支持经实机确认的 command executor 包装；只提取唯一媒体 endpoint，并保留已提供的 `playlistId`。测试覆盖其有效和拒绝路径。
 - 首页和音乐页共用首次加载及下拉刷新 widget；下拉时清空并重建 feed。每页提供自己的首次加载文案。
-- 最近验证：`flutter test` 通过 49 项，`flutter analyze` 无问题；原有 5 条测试 helper `use_null_aware_elements` info 已按 analyzer 建议修复。
+- 最近验证：`flutter test` 通过 58 项，`flutter analyze` 无问题；原有 5 条测试 helper `use_null_aware_elements` info 已按 analyzer 建议修复。
 - `VideoDetailPage` 仍是项目原有的模拟播放/展示页；不要在交接说明或 UI 中声称已经接入真实视频流播放。

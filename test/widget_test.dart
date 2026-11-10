@@ -9,6 +9,8 @@ import 'package:plexus/pages/category/category_page.dart';
 import 'package:plexus/pages/home/browse_destination_page.dart';
 import 'package:plexus/pages/home/item_destination_pages.dart';
 import 'package:plexus/pages/player/special_video_pages.dart';
+import 'package:plexus/pages/player/video_detail_page.dart';
+import 'package:plexus/widgets/error_state_widget.dart';
 import 'package:plexus/widgets/feed_continuation_status.dart';
 
 void main() {
@@ -20,14 +22,14 @@ void main() {
     expect(find.byType(PlexusApp), findsOneWidget);
   });
 
-  testWidgets('category filters are hidden while signed out', (
+  testWidgets('category filters remain available while signed out', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(MaterialApp(home: const CategoryPage()));
 
-    expect(find.text('音乐'), findsNothing);
-    expect(find.text('探索主题'), findsNothing);
-    expect(find.text('登录账号'), findsOneWidget);
+    expect(find.text('音乐'), findsWidgets);
+    expect(find.text('探索主题'), findsOneWidget);
+    expect(find.text('登录账号'), findsNothing);
   });
 
   testWidgets('continuation failure shows details and retry action', (
@@ -50,6 +52,37 @@ void main() {
     expect(find.text('音乐后续分区加载失败'), findsOneWidget);
     expect(find.text('HTTP 500: continuation failed'), findsOneWidget);
     expect(find.text('重试加载更多音乐'), findsOneWidget);
+  });
+
+  testWidgets('feed error state shows details and retries', (
+    WidgetTester tester,
+  ) async {
+    final theme = ThemeData(
+      colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+    );
+    var retried = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: ErrorStateWidget(
+            errorMessage: 'HTTP 403: music feed unavailable',
+            retryText: '重新加载音乐',
+            onRetry: () => retried = true,
+          ),
+        ),
+      ),
+    );
+
+    final errorIcon = tester.widget<Icon>(find.byIcon(Icons.error_outline));
+    expect(errorIcon.size, 64);
+    expect(errorIcon.color, theme.colorScheme.error);
+    expect(find.text('HTTP 403: music feed unavailable'), findsOneWidget);
+    expect(find.text('重新加载音乐'), findsOneWidget);
+
+    await tester.tap(find.text('重新加载音乐'));
+    expect(retried, isTrue);
   });
 
   testWidgets('feed loading and refresh widgets use the theme primary color', (
@@ -209,18 +242,86 @@ void main() {
       expect(find.text(destination.title), findsWidgets);
     }
   });
+
+  test('shared video routing maps each item type to its destination', () {
+    final routes = [
+      (
+        video: _video(itemType: VideoItemType.video, title: 'Video'),
+        destination: VideoDetailPage,
+      ),
+      (
+        video: _video(
+          itemType: VideoItemType.video,
+          title: 'Live event',
+          isLive: true,
+        ),
+        destination: LiveEventDetailPage,
+      ),
+      (
+        video: _video(itemType: VideoItemType.shorts, title: 'Shorts'),
+        destination: ShortsDetailPage,
+      ),
+      (
+        video: _video(
+          itemType: VideoItemType.track,
+          title: 'Track',
+          id: null,
+          browseId: 'track-browse-id',
+        ),
+        destination: TrackDetailPage,
+      ),
+      (
+        video: _video(
+          itemType: VideoItemType.playlist,
+          title: 'Playlist',
+          playlistId: 'RDplaylist',
+        ),
+        destination: PlaylistDetailPage,
+      ),
+      (
+        video: _video(
+          itemType: VideoItemType.channel,
+          title: 'Channel',
+          id: null,
+          browseId: 'channel-browse-id',
+        ),
+        destination: ChannelDetailPage,
+      ),
+      (
+        video: _video(
+          itemType: VideoItemType.browseDestination,
+          title: 'Browse entry',
+          id: null,
+          browseId: 'browse-id',
+        ),
+        destination: BrowseEntryDetailPage,
+      ),
+    ];
+
+    for (final route in routes) {
+      expect(
+        buildVideoItemDestination(route.video).runtimeType,
+        route.destination,
+      );
+    }
+  });
 }
 
 Video _video({
   required VideoItemType itemType,
   required String title,
+  String? id = 'item-id',
+  String? browseId,
+  String? playlistId,
   bool isLive = false,
   bool isUpcoming = false,
 }) => Video(
-  id: 'item-id',
+  id: id,
   itemType: itemType,
   isLive: isLive,
   isUpcoming: isUpcoming,
+  browseId: browseId,
+  playlistId: playlistId,
   title: title,
   channelName: 'Channel',
   channelAvatar: '',

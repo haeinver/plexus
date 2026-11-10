@@ -28,41 +28,43 @@ class YouTubeDataService {
 
   static const String _apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
   static const String _musicBrowseId = 'FEtopics_music';
+  static const String _tvUserAgent =
+      'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)';
+  String? _visitorData;
 
   /// Fetch Real Home Feed Videos strictly using SmartTube TVHTML5 Client & QueryBuilder JSON
   Future<List<VideoSection>> fetchHomeFeed() async {
     return fetchHomeFeedProgressively().last;
   }
 
-  Future<_HomeRequestConfig> _createHomeRequestConfig() async {
+  Future<_HomeRequestConfig> _createHomeRequestConfig({
+    bool requireAuth = true,
+  }) async {
     final authService = YouTubeAuthService();
     await authService.init();
-    if (!authService.isLoggedIn) {
+    final isLoggedIn = authService.isLoggedIn;
+    if (requireAuth && !isLoggedIn) {
       throw StateError('未登录 YouTube 账号，无法请求首页内容');
     }
 
     final localeService = LocaleService();
     await localeService.init();
 
-    final authHeaders = await authService.getAuthHeaders();
+    final authHeaders = isLoggedIn
+        ? await authService.getAuthHeaders()
+        : <String, String>{};
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
+      'User-Agent': _tvUserAgent,
       'Referer': 'https://www.youtube.com/tv',
       ...authHeaders,
     };
-    final context = <String, dynamic>{
-      'client': {
-        'clientName': 'TVHTML5',
-        'clientVersion': '7.20260901.15.00',
-        'clientScreen': 'WATCH',
-        'userAgent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
-        'acceptLanguage': localeService.language,
-        'acceptRegion': localeService.region,
-        'utcOffsetMinutes': localeService.utcOffsetMinutes.toString(),
-      },
-      'user': {'enableSafetyMode': false, 'lockedSafetyMode': false},
-    };
+    final context = createTVBrowseContext(
+      language: localeService.language,
+      region: localeService.region,
+      utcOffsetMinutes: localeService.utcOffsetMinutes.toString(),
+      visitorData: _visitorData,
+    );
 
     return (
       uri: Uri.parse('https://www.youtube.com/youtubei/v1/browse?key=$_apiKey'),
@@ -71,19 +73,93 @@ class YouTubeDataService {
     );
   }
 
+  @visibleForTesting
+  Map<String, dynamic> createTVBrowseContext({
+    required String language,
+    required String region,
+    required String utcOffsetMinutes,
+    String? visitorData,
+  }) => {
+    'client': {
+      'clientName': 'TVHTML5',
+      'clientVersion': '7.20260901.15.00',
+      'clientScreen': 'WATCH',
+      'userAgent': _tvUserAgent,
+      'acceptLanguage': language,
+      'acceptRegion': region,
+      'utcOffsetMinutes': utcOffsetMinutes,
+      if (visitorData != null && visitorData.isNotEmpty)
+        'visitorData': visitorData,
+      'tvAppInfo': {
+        'appQuality': 'TV_APP_QUALITY_FULL_ANIMATION',
+        'zylonLeftNav': true,
+      },
+      'webpSupport': false,
+      'animatedWebpSupport': true,
+    },
+    'user': {'enableSafetyMode': false, 'lockedSafetyMode': false},
+  };
+
+  dynamic _decodeResponseBody(
+    String body, {
+    required Map<String, dynamic> requestContext,
+  }) {
+    final dynamic data = json.decode(body);
+    captureVisitorData(data, requestContext);
+    return data;
+  }
+
+  @visibleForTesting
+  void captureVisitorData(dynamic data, Map<String, dynamic> requestContext) {
+    final responseContext = data is Map<String, dynamic>
+        ? data['responseContext']
+        : null;
+    final visitorData = responseContext is Map<String, dynamic>
+        ? responseContext['visitorData']
+        : null;
+    if (visitorData is String && visitorData.isNotEmpty) {
+      _visitorData = visitorData;
+      final clientContext = requestContext['client'];
+      if (clientContext is Map<String, dynamic>) {
+        clientContext['visitorData'] = visitorData;
+      }
+    }
+  }
+
   Future<VideoSection> fetchMoreHomeSectionVideos(VideoSection section) async {
+    return _fetchMoreSectionVideos(section, requireAuth: true);
+  }
+
+  Future<VideoSection> fetchMoreMusicSectionVideos(VideoSection section) async {
+    return _fetchMoreSectionVideos(section, requireAuth: false);
+  }
+
+  @visibleForTesting
+  Map<String, dynamic> createContinuationRequestBody(
+    Map<String, dynamic> context,
+    String continuation,
+  ) => {
+    'context': context,
+    'continuation': continuation,
+    'racyCheckOk': true,
+    'contentCheckOk': true,
+  };
+
+  Future<VideoSection> _fetchMoreSectionVideos(
+    VideoSection section, {
+    required bool requireAuth,
+  }) async {
     final token = section.continuationToken;
     if (token == null || token.isEmpty) return section;
 
-    final request = await _createHomeRequestConfig();
+    final request = await _createHomeRequestConfig(requireAuth: requireAuth);
     final response = await http
         .post(
           request.uri,
           headers: request.headers,
-          body: json.encode({
-            'context': request.context,
-            'continuation': token,
-          }),
+          body: json.encode(
+            createContinuationRequestBody(request.context, token),
+          ),
         )
         .timeout(const Duration(seconds: 8));
 
@@ -96,7 +172,7 @@ class YouTubeDataService {
 
     return parseHomeSectionContinuationResponse(
       section,
-      json.decode(response.body),
+      _decodeResponseBody(response.body, requestContext: request.context),
     );
   }
 
@@ -106,7 +182,7 @@ class YouTubeDataService {
       throw ArgumentError('YouTube 浏览入口缺少 browseId');
     }
 
-    final request = await _createHomeRequestConfig();
+    final request = await _createHomeRequestConfig(requireAuth: false);
     final response = await http
         .post(
           request.uri,
@@ -129,12 +205,12 @@ class YouTubeDataService {
 
     return parseBrowseDestinationResponse(
       destination,
-      json.decode(response.body),
+      _decodeResponseBody(response.body, requestContext: request.context),
     );
   }
 
   Future<MusicBrowsePage> fetchMusicFeed() async {
-    final request = await _createHomeRequestConfig();
+    final request = await _createHomeRequestConfig(requireAuth: false);
     final response = await http
         .post(
           request.uri,
@@ -153,7 +229,9 @@ class YouTubeDataService {
       );
     }
 
-    return parseMusicBrowseResponse(json.decode(response.body));
+    return parseMusicBrowseResponse(
+      _decodeResponseBody(response.body, requestContext: request.context),
+    );
   }
 
   Future<MusicBrowsePage> fetchMoreMusicSections(String continuation) async {
@@ -161,15 +239,14 @@ class YouTubeDataService {
       throw ArgumentError('YouTube 音乐 section-list continuation 不能为空');
     }
 
-    final request = await _createHomeRequestConfig();
+    final request = await _createHomeRequestConfig(requireAuth: false);
     final response = await http
         .post(
           request.uri,
           headers: request.headers,
-          body: json.encode({
-            'context': request.context,
-            'continuation': continuation,
-          }),
+          body: json.encode(
+            createContinuationRequestBody(request.context, continuation),
+          ),
         )
         .timeout(const Duration(seconds: 8));
 
@@ -180,7 +257,9 @@ class YouTubeDataService {
       );
     }
 
-    return parseMusicBrowseContinuationResponse(json.decode(response.body));
+    return parseMusicBrowseContinuationResponse(
+      _decodeResponseBody(response.body, requestContext: request.context),
+    );
   }
 
   Stream<MusicBrowsePage> fetchMusicFeedProgressively() async* {
@@ -227,15 +306,14 @@ class YouTubeDataService {
     final token = section.continuationToken;
     if (token == null || token.isEmpty) return section;
 
-    final request = await _createHomeRequestConfig();
+    final request = await _createHomeRequestConfig(requireAuth: false);
     final response = await http
         .post(
           request.uri,
           headers: request.headers,
-          body: json.encode({
-            'context': request.context,
-            'continuation': token,
-          }),
+          body: json.encode(
+            createContinuationRequestBody(request.context, token),
+          ),
         )
         .timeout(const Duration(seconds: 8));
 
@@ -248,7 +326,7 @@ class YouTubeDataService {
 
     return parseBrowseDestinationContinuationResponse(
       section,
-      json.decode(response.body),
+      _decodeResponseBody(response.body, requestContext: request.context),
     );
   }
 
@@ -271,7 +349,10 @@ class YouTubeDataService {
       );
     }
 
-    final dynamic data = json.decode(response.body);
+    final dynamic data = _decodeResponseBody(
+      response.body,
+      requestContext: request.context,
+    );
     final sections = parseHomeFeedResponse(data);
     yield List.unmodifiable(sections);
     var continuation = extractHomeSectionContinuationToken(data);
@@ -286,10 +367,9 @@ class YouTubeDataService {
           .post(
             request.uri,
             headers: request.headers,
-            body: json.encode({
-              'context': request.context,
-              'continuation': continuation,
-            }),
+            body: json.encode(
+              createContinuationRequestBody(request.context, continuation),
+            ),
           )
           .timeout(const Duration(seconds: 8));
 
@@ -301,7 +381,10 @@ class YouTubeDataService {
         );
       }
 
-      final dynamic continuationData = json.decode(continuationResponse.body);
+      final dynamic continuationData = _decodeResponseBody(
+        continuationResponse.body,
+        requestContext: request.context,
+      );
       final nextSections = parseHomeContinuationResponse(continuationData);
       if (nextSections.isEmpty) break;
 
@@ -370,8 +453,10 @@ class YouTubeDataService {
 
     final continuationContents = data['continuationContents'];
     if (continuationContents is! Map<String, dynamic>) {
-      throw const FormatException(
-        'YouTube 分区 continuation 缺少 continuationContents',
+      throw FormatException(
+        'YouTube 分区 continuation 缺少 continuationContents；'
+        '顶层字段：${data.keys.toList()}；'
+        '脱敏结构：${_describeJsonShape(data)}',
       );
     }
 
@@ -502,6 +587,28 @@ class YouTubeDataService {
     final sections = _parseHomeShelves(rawShelves);
     if (sections.isEmpty) {
       throw const FormatException('YouTube TVHTML5 音乐响应中没有可解析的内容分区');
+    }
+    if (sections.first.title == null && rawShelves.isNotEmpty) {
+      final firstShelf = rawShelves.first;
+      final shelfRenderer = firstShelf is Map<String, dynamic>
+          ? firstShelf['shelfRenderer']
+          : null;
+      final shelfHeaderRenderer = shelfRenderer is Map<String, dynamic>
+          ? shelfRenderer['headerRenderer']
+          : null;
+      final heroCarouselHeader = shelfHeaderRenderer is Map<String, dynamic>
+          ? shelfHeaderRenderer['heroCarouselHeaderRenderer']
+          : null;
+      final heroHeader = heroCarouselHeader is Map<String, dynamic>
+          ? heroCarouselHeader['header']
+          : null;
+      final heroShelfHeader = heroHeader is Map<String, dynamic>
+          ? heroHeader['shelfHeaderRenderer']
+          : null;
+      throw FormatException(
+        'YouTube 音乐首栏缺少原生标题；'
+        'hero shelf header 结构：${_describeJsonShape(heroShelfHeader)}',
+      );
     }
 
     return (
@@ -758,7 +865,13 @@ class YouTubeDataService {
 
   String? _extractShelfTitle(Map<String, dynamic> shelf) {
     final shelfHeader = shelf['headerRenderer']?['shelfHeaderRenderer'];
+    final heroShelfHeader =
+        shelf['headerRenderer']?['heroCarouselHeaderRenderer']?['header']?['shelfHeaderRenderer'];
     return _extractText(shelf['title']) ??
+        _extractText(
+          heroShelfHeader?['avatarLockup']?['avatarLockupRenderer']?['title'],
+        ) ??
+        _extractText(heroShelfHeader?['title']) ??
         _extractText(shelfHeader?['title']) ??
         _extractText(
           shelfHeader?['avatarLockup']?['avatarLockupRenderer']?['title'],
@@ -951,6 +1064,7 @@ class YouTubeDataService {
 
     final signalEndpoint = navigation['signalServiceEndpoint'];
     final reloadCommand = navigation['loadReloadContinuationCommand'];
+    final clientActionEndpoint = navigation['clientActionEndpoint'];
     if (signalEndpoint != null) {
       if (signalEndpoint is! Map<String, dynamic>) {
         throw FormatException(
@@ -965,10 +1079,53 @@ class YouTubeDataService {
       return null;
     }
 
+    if (clientActionEndpoint != null) {
+      final navigationActions = navigation.keys
+          .where((key) => key != 'clickTrackingParams')
+          .toList();
+      if (reloadCommand != null ||
+          navigationActions.length != 1 ||
+          navigationActions.single != 'clientActionEndpoint' ||
+          clientActionEndpoint is! Map<String, dynamic> ||
+          clientActionEndpoint.keys.any((key) => key != 'action')) {
+        throw FormatException(
+          'YouTube gridButtonRenderer「$title」的 clientActionEndpoint '
+          '与其他 navigation command 冲突或格式无效；'
+          '脱敏结构：${_describeJsonShape(navigation)}',
+        );
+      }
+
+      final action = clientActionEndpoint['action'];
+      if (action is Map<String, dynamic> &&
+          action.length == 1 &&
+          action['actionType'] == 'OPEN_SIGN_IN_PROMPT') {
+        return null;
+      }
+
+      throw FormatException(
+        'YouTube gridButtonRenderer「$title」包含未知 clientActionEndpoint；'
+        '脱敏结构：${_describeJsonShape(navigation)}',
+      );
+    }
+
     if (reloadCommand is! Map<String, dynamic>) {
+      final clientActionEndpoint = navigation['clientActionEndpoint'];
+      final action = clientActionEndpoint is Map<String, dynamic>
+          ? clientActionEndpoint['action']
+          : null;
+      final rawActionType = action is Map<String, dynamic>
+          ? action['actionType']
+          : null;
+      final actionType =
+          rawActionType is String &&
+              RegExp(r'^[A-Z0-9_]+$').hasMatch(rawActionType)
+          ? rawActionType
+          : '<hidden-or-missing>';
       throw FormatException(
         'YouTube gridButtonRenderer「$title」缺少 loadReloadContinuationCommand；'
-        'navigationEndpoint 字段：${navigation.keys.toList()}',
+        'navigationEndpoint 字段：${navigation.keys.toList()}；'
+        '脱敏结构：${_describeJsonShape(navigation)}；'
+        'clientActionEndpoint.action.actionType：$actionType',
       );
     }
     final token = reloadCommand['continuation']?.toString();

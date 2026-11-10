@@ -7,11 +7,12 @@ import '../../services/mock_data_service.dart';
 import '../../services/youtube_auth_service.dart';
 import '../../services/youtube_data_service.dart';
 import '../../widgets/category_chip.dart';
+import '../../widgets/error_state_widget.dart';
 import '../../widgets/feed_continuation_status.dart';
-import '../../widgets/sign_in_required_widget.dart';
 import '../../widgets/video_card.dart';
 import '../../widgets/video_section_row.dart';
 import '../home/browse_destination_page.dart';
+import '../home/item_destination_pages.dart';
 import '../player/video_detail_page.dart';
 import '../search/search_page.dart';
 
@@ -34,7 +35,6 @@ class _CategoryPageState extends State<CategoryPage> {
   final Map<int, Set<String>> _seenMusicShelfTokens = {};
   String? _musicError;
   bool _isLoadingMusic = false;
-  bool _musicRequiresSignIn = false;
   int _musicLoadGeneration = 0;
   int _musicFeedLayoutGeneration = 0;
 
@@ -52,9 +52,8 @@ class _CategoryPageState extends State<CategoryPage> {
 
   void _onAccountChanged() {
     if (!mounted) return;
-    setState(() {});
-    if (_authService.isLoggedIn && _selectedCategoryId == 'music') {
-      _loadMusicFeed();
+    if (_selectedCategoryId == 'music') {
+      _loadMusicFeed(rebuildFeed: true);
     }
   }
 
@@ -71,7 +70,6 @@ class _CategoryPageState extends State<CategoryPage> {
     setState(() {
       _isLoadingMusic = true;
       _musicError = null;
-      _musicRequiresSignIn = false;
       if (rebuildFeed) {
         _musicSections = [];
         _musicFeedLayoutGeneration++;
@@ -82,17 +80,6 @@ class _CategoryPageState extends State<CategoryPage> {
     });
 
     try {
-      await _authService.init();
-      if (!mounted || generation != _musicLoadGeneration) return;
-      if (!_authService.isLoggedIn) {
-        setState(() {
-          _musicSections = [];
-          _musicRequiresSignIn = true;
-          _isLoadingMusic = false;
-        });
-        return;
-      }
-
       var refreshedSections = <VideoSection>[];
       await for (final page
           in _youtubeDataService.fetchMusicFeedProgressively()) {
@@ -138,7 +125,7 @@ class _CategoryPageState extends State<CategoryPage> {
 
     try {
       final updatedSection = await _youtubeDataService
-          .fetchMoreHomeSectionVideos(section);
+          .fetchMoreMusicSectionVideos(section);
       if (!mounted) return;
       final nextToken = updatedSection.continuationToken;
       if (nextToken == token ||
@@ -165,7 +152,6 @@ class _CategoryPageState extends State<CategoryPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isLoggedIn = _authService.isLoggedIn;
     final categories = _dataService.categories;
     final selectedCategory = categories.firstWhere(
       (c) => c.id == _selectedCategoryId,
@@ -191,48 +177,42 @@ class _CategoryPageState extends State<CategoryPage> {
           ),
         ],
       ),
-      body: !isLoggedIn
-          ? SignInRequiredWidget(
-              message: 'YouTube TV 官方接口要求登录账号后才能获取分类内容',
-              onLoginSuccess: _onAccountChanged,
-            )
-          : Column(
-              children: [
-                SizedBox(
-                  height: 52,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: categories.length,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(width: 8),
-                    itemBuilder: (context, index) {
-                      final category = categories[index];
-                      return CategoryChip(
-                        category: category,
-                        isSelected: _selectedCategoryId == category.id,
-                        onSelected: (_) => _selectCategory(category.id),
-                      );
-                    },
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.45),
-                ),
-                Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    child: _buildCategoryContent(
-                      selectedCategory,
-                      categories,
-                      theme,
-                      colorScheme,
-                    ),
-                  ),
-                ),
-              ],
+      body: Column(
+        children: [
+          SizedBox(
+            height: 52,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: categories.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final category = categories[index];
+                return CategoryChip(
+                  category: category,
+                  isSelected: _selectedCategoryId == category.id,
+                  onSelected: (_) => _selectCategory(category.id),
+                );
+              },
             ),
+          ),
+          Divider(
+            height: 1,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.45),
+          ),
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              child: _buildCategoryContent(
+                selectedCategory,
+                categories,
+                theme,
+                colorScheme,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -461,29 +441,13 @@ class _CategoryPageState extends State<CategoryPage> {
     ThemeData theme,
     ColorScheme colorScheme,
   ) {
-    if (_musicRequiresSignIn) {
-      return SignInRequiredWidget(onLoginSuccess: _loadMusicFeed);
-    }
     if (_isLoadingMusic && _musicSections.isEmpty) {
       return const FeedInitialLoading(message: '正在加载 YouTube 音乐内容...');
     }
     if (_musicError != null && _musicSections.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SelectableText(_musicError!),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: _loadMusicFeed,
-                icon: const Icon(Icons.refresh),
-                label: const Text('重试'),
-              ),
-            ],
-          ),
-        ),
+      return ErrorStateWidget(
+        errorMessage: _musicError!,
+        onRetry: _loadMusicFeed,
       );
     }
     if (_musicSections.isEmpty) {
@@ -541,10 +505,7 @@ class _CategoryPageState extends State<CategoryPage> {
   }
 
   void _openMusicVideo(Video video) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => VideoDetailPage(video: video)),
-    );
+    openVideoItemDestination(context, video);
   }
 
   void _openMusicShelfDestination(VideoSection section) {

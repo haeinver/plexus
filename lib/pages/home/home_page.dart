@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../models/video.dart';
 import '../../models/video_section.dart';
-import '../player/special_video_pages.dart';
-import '../player/video_detail_page.dart';
 import '../../services/locale_service.dart';
 import '../../services/youtube_auth_service.dart';
 import '../../services/youtube_data_service.dart';
@@ -192,96 +190,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openVideoOrBrowseDestination(Video video) {
-    switch (video.itemType) {
-      case VideoItemType.video:
-        if (video.id == null || video.id!.isEmpty || video.browseId != null) {
-          throw StateError(
-            'YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配',
-          );
-        }
-        if (video.isLive || video.isUpcoming) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => LiveEventDetailPage(video: video),
-            ),
-          );
-          return;
-        }
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => VideoDetailPage(video: video),
-          ),
-        );
-        return;
-      case VideoItemType.shorts:
-        if (video.id == null || video.id!.isEmpty || video.browseId != null) {
-          throw StateError('YouTube Shorts 条目 endpoint 与内容类型不匹配');
-        }
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ShortsDetailPage(video: video),
-          ),
-        );
-        return;
-      case VideoItemType.track:
-        _openItemDestination(
-          video,
-          TrackDetailPage(video: video),
-          requiresBrowseId: true,
-        );
-        return;
-      case VideoItemType.channel:
-        _openItemDestination(
-          video,
-          ChannelDetailPage(video: video),
-          requiresBrowseId: true,
-        );
-        return;
-      case VideoItemType.browseDestination:
-        if (video.id != null ||
-            video.browseId == null ||
-            video.browseId!.isEmpty) {
-          throw StateError(
-            'YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配',
-          );
-        }
-        _openItemDestination(
-          video,
-          BrowseEntryDetailPage(video: video),
-          requiresBrowseId: true,
-        );
-        return;
-      case VideoItemType.playlist:
-        if ((video.browseId == null || video.browseId!.isEmpty) &&
-            (video.playlistId == null || video.playlistId!.isEmpty)) {
-          throw StateError('YouTube playlist 条目缺少 browseId 或 videoId');
-        }
-        if (video.browseId != null && video.id != null) {
-          throw StateError('YouTube playlist 条目同时含 browseId 和 videoId');
-        }
-        _openItemDestination(video, PlaylistDetailPage(video: video));
-        return;
-    }
-  }
-
-  void _openItemDestination(
-    Video video,
-    Widget destination, {
-    bool requiresBrowseId = false,
-  }) {
-    if (requiresBrowseId &&
-        (video.id != null ||
-            video.browseId == null ||
-            video.browseId!.isEmpty)) {
-      throw StateError('YouTube ${video.itemType.name} 条目缺少有效 browseId');
-    }
-    Navigator.push(
-      context,
-      MaterialPageRoute<void>(builder: (context) => destination),
-    );
+    openVideoItemDestination(context, video);
   }
 
   @override

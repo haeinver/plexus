@@ -1,6 +1,63 @@
 import 'package:flutter/material.dart';
 
 import '../../models/video.dart';
+import '../player/special_video_pages.dart';
+import '../player/video_detail_page.dart';
+
+void openVideoItemDestination(BuildContext context, Video video) {
+  Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(builder: (_) => buildVideoItemDestination(video)),
+  );
+}
+
+Widget buildVideoItemDestination(Video video) {
+  final Widget destination;
+  switch (video.itemType) {
+    case VideoItemType.video:
+      if (video.id == null || video.id!.isEmpty || video.browseId != null) {
+        throw StateError('YouTube ${video.itemType.name} 条目 endpoint 与内容类型不匹配');
+      }
+      destination = video.isLive || video.isUpcoming
+          ? LiveEventDetailPage(video: video)
+          : VideoDetailPage(video: video);
+      break;
+    case VideoItemType.shorts:
+      if (video.id == null || video.id!.isEmpty || video.browseId != null) {
+        throw StateError('YouTube Shorts 条目 endpoint 与内容类型不匹配');
+      }
+      destination = ShortsDetailPage(video: video);
+      break;
+    case VideoItemType.track:
+      _requireBrowseId(video);
+      destination = TrackDetailPage(video: video);
+      break;
+    case VideoItemType.playlist:
+      if ((video.browseId == null || video.browseId!.isEmpty) &&
+          (video.playlistId == null || video.playlistId!.isEmpty)) {
+        throw StateError('YouTube playlist 条目缺少 browseId 或 videoId');
+      }
+      if (video.browseId != null && video.id != null) {
+        throw StateError('YouTube playlist 条目同时含 browseId 和 videoId');
+      }
+      destination = PlaylistDetailPage(video: video);
+      break;
+    case VideoItemType.channel:
+      _requireBrowseId(video);
+      destination = ChannelDetailPage(video: video);
+      break;
+    case VideoItemType.browseDestination:
+      _requireBrowseId(video);
+      destination = BrowseEntryDetailPage(video: video);
+      break;
+  }
+  return destination;
+}
+
+void _requireBrowseId(Video video) {
+  if (video.id != null || video.browseId == null || video.browseId!.isEmpty) {
+    throw StateError('YouTube ${video.itemType.name} 条目缺少有效 browseId');
+  }
+}
 
 class PlaylistDetailPage extends StatelessWidget {
   final Video video;

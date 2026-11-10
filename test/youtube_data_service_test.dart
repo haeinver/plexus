@@ -6,6 +6,62 @@ import 'package:plexus/services/youtube_data_service.dart';
 void main() {
   final service = YouTubeDataService();
 
+  test('includes TV browse check flags in continuation requests', () {
+    final context = <String, dynamic>{
+      'client': {'clientName': 'TVHTML5'},
+    };
+
+    expect(service.createContinuationRequestBody(context, 'next-token'), {
+      'context': context,
+      'continuation': 'next-token',
+      'racyCheckOk': true,
+      'contentCheckOk': true,
+    });
+  });
+
+  test(
+    'builds the TV browse context with app capabilities and visitor data',
+    () {
+      final context = service.createTVBrowseContext(
+        language: 'en',
+        region: 'US',
+        utcOffsetMinutes: '0',
+        visitorData: 'visitor-data',
+      );
+
+      expect(context['client'], {
+        'clientName': 'TVHTML5',
+        'clientVersion': '7.20260901.15.00',
+        'clientScreen': 'WATCH',
+        'userAgent': isNotEmpty,
+        'acceptLanguage': 'en',
+        'acceptRegion': 'US',
+        'utcOffsetMinutes': '0',
+        'visitorData': 'visitor-data',
+        'tvAppInfo': {
+          'appQuality': 'TV_APP_QUALITY_FULL_ANIMATION',
+          'zylonLeftNav': true,
+        },
+        'webpSupport': false,
+        'animatedWebpSupport': true,
+      });
+    },
+  );
+
+  test('reuses visitor data from a browse response in the request context', () {
+    final context = service.createTVBrowseContext(
+      language: 'en',
+      region: 'US',
+      utcOffsetMinutes: '0',
+    );
+
+    service.captureVisitorData({
+      'responseContext': {'visitorData': 'response-visitor-data'},
+    }, context);
+
+    expect(context['client']['visitorData'], 'response-visitor-data');
+  });
+
   test('parses native TV home shelves, video tiles, and Shorts tiles', () {
     final sections = service.parseHomeFeedResponse(
       _homeResponse([
@@ -299,6 +355,84 @@ void main() {
     },
   );
 
+  test('ignores a sign-in prompt grid button without creating a section', () {
+    final response = {
+      'continuationContents': {
+        'sectionListContinuation': {
+          'contents': [
+            _shelf('More music', [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'continued-music-video',
+                  title: 'Continued music video',
+                  thumbnailUrl: 'https://example.test/continued-music.jpg',
+                ),
+              },
+            ]),
+            _shelf(null, [
+              {
+                'gridButtonRenderer': {
+                  'title': {'simpleText': '登录即可查看更多符合你的喜好的推荐内容'},
+                  'navigationEndpoint': {
+                    'clickTrackingParams': 'sign-in-prompt-tracking',
+                    'clientActionEndpoint': {
+                      'action': {'actionType': 'OPEN_SIGN_IN_PROMPT'},
+                    },
+                  },
+                },
+              },
+            ]),
+          ],
+          'continuations': [
+            {
+              'nextContinuationData': {
+                'continuation': 'next-music-section-token',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    final sections = service.parseHomeContinuationResponse(response);
+
+    expect(sections.length, 1);
+    expect(sections.single.title, 'More music');
+    expect(sections.single.videos.single.id, 'continued-music-video');
+    expect(
+      service.extractHomeSectionContinuationToken(response),
+      'next-music-section-token',
+    );
+  });
+
+  test('rejects unknown client actions on grid buttons', () {
+    final response = _homeResponse([
+      _shelf(null, [
+        {
+          'gridButtonRenderer': {
+            'title': {'simpleText': 'Unknown action'},
+            'navigationEndpoint': {
+              'clientActionEndpoint': {
+                'action': {'actionType': 'UNKNOWN_ACTION'},
+              },
+            },
+          },
+        },
+      ]),
+    ]);
+
+    expect(
+      () => service.parseHomeFeedResponse(response),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('未知 clientActionEndpoint'),
+        ),
+      ),
+    );
+  });
+
   test('parses browse destination items and page continuation', () {
     final destination = VideoSection(
       title: 'Music',
@@ -406,6 +540,60 @@ void main() {
       'https://www.youtube.com/watch?v=music-video-id&list=RDmusic-video-id',
     );
   });
+
+  test(
+    'extracts the first Music shelf title from its hero carousel header',
+    () {
+      final response = _homeResponse([
+        {
+          'shelfRenderer': {
+            'headerRenderer': {
+              'heroCarouselHeaderRenderer': {
+                'header': {
+                  'shelfHeaderRenderer': {
+                    'avatarLockup': {
+                      'avatarLockupRenderer': {
+                        'title': {
+                          'runs': [
+                            {'text': 'Music spotlight'},
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+                'spotlight': {'entityMetadataRenderer': <String, dynamic>{}},
+              },
+            },
+            'content': {
+              'horizontalListRenderer': {
+                'items': [
+                  {
+                    'tvMusicVideoRenderer': {
+                      'primaryText': {'simpleText': 'Spotlight song'},
+                      'navigationEndpoint': {
+                        'watchEndpoint': {'videoId': 'spotlight-video'},
+                      },
+                      'thumbnail': {
+                        'thumbnails': [
+                          {'url': 'https://example.test/spotlight.jpg'},
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ]);
+
+      final page = service.parseMusicBrowseResponse(response);
+
+      expect(page.sections.single.title, 'Music spotlight');
+      expect(page.sections.single.videos.single.title, 'Spotlight song');
+    },
+  );
 
   test(
     'parses Music section-list continuation independently of row tokens',
@@ -589,6 +777,48 @@ void main() {
       'next-video',
     ]);
     expect(updated.continuationToken, 'next-token');
+  });
+
+  test('surfaces a metadata-only horizontal continuation response', () {
+    final original = VideoSection(
+      title: 'Recommended',
+      videos: [
+        Video(
+          id: 'existing-video',
+          itemType: VideoItemType.video,
+          title: 'Existing video',
+          channelName: '',
+          channelAvatar: '',
+          views: '',
+          uploadTime: '',
+          duration: '',
+          thumbnailUrl: 'https://example.test/existing.jpg',
+          videoUrl: 'https://www.youtube.com/watch?v=existing-video',
+          categoryId: 'home',
+          categoryName: 'Recommended',
+          description: 'Existing video',
+          likesCount: 0,
+        ),
+      ],
+      continuationToken: 'section-token',
+    );
+
+    expect(
+      () => service.parseHomeSectionContinuationResponse(original, {
+        'responseContext': {
+          'visitorData': 'visitor-data',
+          'serviceTrackingParams': <dynamic>[],
+        },
+        'trackingParams': 'tracking-data',
+      }),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('缺少 continuationContents'),
+        ),
+      ),
+    );
   });
 
   test('appends shelves from both TV section-list continuation envelopes', () {
