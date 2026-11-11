@@ -94,7 +94,7 @@ class VideoCard extends StatelessWidget {
                           );
                         },
                       ),
-                      if (video.duration.isNotEmpty)
+                      if (video.thumbnailBadgeText.isNotEmpty)
                         Positioned(
                           right: 8,
                           bottom: 8,
@@ -109,7 +109,7 @@ class VideoCard extends StatelessWidget {
                                 vertical: 3,
                               ),
                               child: Text(
-                                video.duration,
+                                video.thumbnailBadgeText,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 12,

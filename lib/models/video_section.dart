@@ -7,6 +7,7 @@ class VideoSection {
   final String? browseId;
   final String? browseParams;
   final String? browseTitle;
+  final String? searchQuery;
 
   const VideoSection({
     required this.title,
@@ -15,5 +16,6 @@ class VideoSection {
     this.browseId,
     this.browseParams,
     this.browseTitle,
+    this.searchQuery,
   });
 }

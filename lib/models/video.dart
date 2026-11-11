@@ -21,7 +21,7 @@ class Video {
   final String channelAvatar;
   final String views;
   final String uploadTime;
-  final String duration;
+  final String thumbnailBadgeText;
   final String thumbnailUrl;
   final String videoUrl;
   final String categoryId;
@@ -44,7 +44,7 @@ class Video {
     required this.channelAvatar,
     required this.views,
     required this.uploadTime,
-    required this.duration,
+    this.thumbnailBadgeText = '',
     required this.thumbnailUrl,
     required this.videoUrl,
     required this.categoryId,

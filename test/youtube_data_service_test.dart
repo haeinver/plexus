@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plexus/models/video.dart';
 import 'package:plexus/models/video_section.dart';
+import 'package:plexus/pages/home/item_destination_pages.dart';
+import 'package:plexus/pages/player/special_video_pages.dart';
+import 'package:plexus/pages/player/video_detail_page.dart';
 import 'package:plexus/services/youtube_data_service.dart';
 
 void main() {
@@ -17,6 +20,77 @@ void main() {
       'racyCheckOk': true,
       'contentCheckOk': true,
     });
+  });
+
+  test('builds the original SmartTube YouTube completion request', () {
+    final uri = service.createSearchSuggestionsUri('王', region: 'CN');
+
+    expect(uri.host, 'clients1.google.com');
+    expect(uri.path, '/complete/search');
+    expect(uri.queryParameters, {
+      'client': 'youtube-lr',
+      'ds': 'yt',
+      'xhr': 't',
+      'oe': 'utf-8',
+      'xssi': 't',
+      'gl': 'CN',
+      'q': '王',
+    });
+  });
+
+  test('parses and deduplicates YouTube search suggestions', () {
+    expect(
+      service.parseSearchSuggestionsResponse(
+        ")]}',\n[\"王\",[[\"王者荣耀\",0],[\"王一博\",0],[\"王者荣耀\",0]]]",
+      ),
+      ['王者荣耀', '王一博'],
+    );
+  });
+
+  test('rejects malformed YouTube search suggestion entries', () {
+    expect(
+      () => service.parseSearchSuggestionsResponse('["王",[[0,0]]]'),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('[1][0][0]'),
+        ),
+      ),
+    );
+  });
+
+  test('builds browse destination request with its endpoint fields', () {
+    final context = <String, dynamic>{
+      'client': {'clientName': 'TVHTML5'},
+    };
+    final destination = VideoSection(
+      title: 'Music',
+      videos: const [],
+      browseId: 'music-browse-id',
+      browseParams: 'music-browse-params',
+    );
+
+    expect(service.createBrowseDestinationRequestBody(context, destination), {
+      'context': context,
+      'browseId': 'music-browse-id',
+      'params': 'music-browse-params',
+    });
+  });
+
+  test('rejects browse destination requests without a browse ID', () {
+    final destination = VideoSection(title: 'Music', videos: const []);
+
+    expect(
+      () => service.createBrowseDestinationRequestBody({}, destination),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('browseId'),
+        ),
+      ),
+    );
   });
 
   test(
@@ -96,7 +170,7 @@ void main() {
       sections[0].videos.single.thumbnailUrl,
       'https://example.test/video-1.jpg',
     );
-    expect(sections[0].videos.single.duration, '10:11');
+    expect(sections[0].videos.single.thumbnailBadgeText, '10:11');
     expect(sections[0].videos.single.views, 'Channel One 1.2M views');
     expect(sections[0].continuationToken, 'recommended-next');
     expect(sections[1].continuationToken, isNull);
@@ -529,16 +603,635 @@ void main() {
 
     final musicVideo = page.sections.first.videos.single;
     expect(musicVideo.itemType, VideoItemType.video);
+    expect(musicVideo.categoryId, 'music');
     expect(musicVideo.id, 'music-video-id');
     expect(musicVideo.playlistId, 'RDmusic-video-id');
     expect(musicVideo.title, 'Music video title');
     expect(musicVideo.channelName, 'Artist name');
     expect(musicVideo.views, '98M views • 2 months ago');
-    expect(musicVideo.duration, '4:36');
+    expect(musicVideo.thumbnailBadgeText, '4:36');
     expect(
       musicVideo.videoUrl,
       'https://www.youtube.com/watch?v=music-video-id&list=RDmusic-video-id',
     );
+  });
+
+  test('parses the Gaming TV topic shelf and its native avatar-lockup title', () {
+    final response = _homeResponse([
+      {
+        'shelfRenderer': {
+          'headerRenderer': {
+            'shelfHeaderRenderer': {
+              'avatarLockup': {
+                'avatarLockupRenderer': {
+                  'title': {
+                    'runs': [
+                      {'text': 'Gameplay picks'},
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          'content': {
+            'horizontalListRenderer': {
+              'items': [
+                {
+                  'tileRenderer': _tile(
+                    videoId: 'gaming-video',
+                    title: 'Gameplay video',
+                    thumbnailUrl: 'https://example.test/gaming.jpg',
+                  ),
+                },
+              ],
+              'continuations': [
+                {
+                  'nextContinuationData': {'continuation': 'gaming-row-next'},
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+    final sectionList =
+        response['contents']['tvBrowseRenderer']['content']['tvSurfaceContentRenderer']['content']['sectionListRenderer'];
+    sectionList['continuations'] = [
+      {
+        'nextContinuationData': {'continuation': 'gaming-sections-next'},
+      },
+    ];
+
+    final page = service.parseGamingBrowseResponse(response);
+
+    expect(page.sections.single.title, 'Gameplay picks');
+    final gameVideo = page.sections.single.videos.single;
+    expect(gameVideo.id, 'gaming-video');
+    expect(gameVideo.itemType, VideoItemType.video);
+    expect(gameVideo.categoryId, 'gaming');
+    expect(gameVideo.categoryName, 'Gameplay picks');
+    expect(gameVideo.videoUrl, 'https://www.youtube.com/watch?v=gaming-video');
+    expect(buildVideoItemDestination(gameVideo), isA<VideoDetailPage>());
+    expect(page.sections.single.continuationToken, 'gaming-row-next');
+    expect(page.continuationToken, 'gaming-sections-next');
+
+    final globalContinuation = service.parseGamingBrowseContinuationResponse({
+      'continuationContents': {
+        'sectionListContinuation': {
+          'contents': [
+            _shelf('More gameplay', [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'gaming-next-video',
+                  title: 'More gameplay',
+                  thumbnailUrl: 'https://example.test/gaming-next.jpg',
+                ),
+              },
+            ]),
+          ],
+          'continuations': [
+            {
+              'nextContinuationData': {
+                'continuation': 'gaming-sections-next-2',
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(
+      globalContinuation.sections.single.videos.single.categoryId,
+      'gaming',
+    );
+    expect(globalContinuation.continuationToken, 'gaming-sections-next-2');
+
+    final horizontalContinuation = service.parseHomeSectionContinuationResponse(
+      page.sections.single,
+      {
+        'continuationContents': {
+          'horizontalListContinuation': {
+            'items': [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'gaming-row-video',
+                  title: 'More games in this row',
+                  thumbnailUrl: 'https://example.test/gaming-row.jpg',
+                ),
+              },
+            ],
+            'continuations': [
+              {
+                'nextContinuationData': {'continuation': 'gaming-row-next-2'},
+              },
+            ],
+          },
+        },
+      },
+      categoryId: 'gaming',
+    );
+    expect(horizontalContinuation.videos.last.categoryId, 'gaming');
+    expect(horizontalContinuation.continuationToken, 'gaming-row-next-2');
+  });
+
+  test('parses TV search lockups and their section continuation', () {
+    Map<String, dynamic> lockupVideo(
+      String videoId,
+      String title, {
+      String? badgeText,
+      String? badgeStyle,
+    }) => {
+      'lockupViewModel': {
+        'contentImage': {
+          'thumbnailViewModel': {
+            'image': {
+              'thumbnails': [
+                {
+                  'url': 'https://example.test/$videoId.jpg',
+                  'width': 640,
+                  'height': 360,
+                },
+              ],
+            },
+            'overlays': badgeText == null
+                ? <dynamic>[]
+                : [
+                    {
+                      'thumbnailBottomOverlayViewModel': {
+                        'badges': [
+                          {
+                            'thumbnailBadgeViewModel': {
+                              'badgeStyle':
+                                  badgeStyle ??
+                                  (badgeText == 'LIVE'
+                                      ? 'BADGE_STYLE_TYPE_LIVE_NOW'
+                                      : 'BADGE_STYLE_TYPE_UPCOMING'),
+                              'icon': {
+                                'sources': [
+                                  {
+                                    'clientResource': {
+                                      'imageName': 'LIVE_BADGE',
+                                    },
+                                  },
+                                ],
+                              },
+                              'rendererContext': {
+                                'accessibilityContext': {'label': badgeText},
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+          },
+        },
+        'metadata': {
+          'lockupMetadataViewModel': {
+            'title': {
+              'runs': [
+                {'text': title},
+              ],
+            },
+            'metadata': {
+              'contentMetadataViewModel': {
+                'metadataRows': [
+                  {
+                    'metadataParts': [
+                      {
+                        'text': {'simpleText': 'Search channel'},
+                      },
+                    ],
+                  },
+                  {
+                    'metadataParts': [
+                      {
+                        'text': {'simpleText': '1M views'},
+                      },
+                      {
+                        'text': {'simpleText': '2 days ago'},
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+        'rendererContext': {
+          'commandContext': {
+            'onTap': {
+              'innertubeCommand': {
+                'clickTrackingParams': 'synthetic-tracking',
+                'watchEndpoint': {
+                  'videoId': videoId,
+                  'playlistId': 'RDsearch-playlist',
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    final page = service.parseSearchResponse({
+      'estimatedResults': '42',
+      'contents': {
+        'sectionListRenderer': {
+          'contents': [
+            _shelf('Search results', [
+              lockupVideo(
+                'search-video',
+                'Search result video',
+                badgeText: 'LIVE',
+              ),
+            ], continuationToken: 'search-next'),
+          ],
+        },
+      },
+    });
+
+    expect(page.estimatedResults, '42');
+    expect(page.sections.single.title, 'Search results');
+    expect(page.sections.single.continuationToken, 'search-next');
+    final video = page.sections.single.videos.single;
+    expect(video.itemType, VideoItemType.video);
+    expect(video.categoryId, 'search');
+    expect(video.id, 'search-video');
+    expect(video.playlistId, 'RDsearch-playlist');
+    expect(video.title, 'Search result video');
+    expect(video.channelName, 'Search channel');
+    expect(video.views, '1M views • 2 days ago');
+    expect(video.thumbnailUrl, 'https://example.test/search-video.jpg');
+    expect(video.thumbnailBadgeText, 'LIVE');
+    expect(video.isLive, isTrue);
+    expect(
+      video.videoUrl,
+      'https://www.youtube.com/watch?v=search-video&list=RDsearch-playlist',
+    );
+    expect(buildVideoItemDestination(video), isA<LiveEventDetailPage>());
+
+    final localizedLivePage = service.parseSearchResponse({
+      'contents': {
+        'sectionListRenderer': {
+          'contents': [
+            _shelf('Live results', [
+              lockupVideo(
+                'search-live-localized',
+                'Localized live result',
+                badgeText: '直播',
+                badgeStyle: 'BADGE_STYLE_TYPE_SIMPLE',
+              ),
+            ]),
+          ],
+        },
+      },
+    });
+    final localizedLive = localizedLivePage.sections.single.videos.single;
+    expect(localizedLive.thumbnailBadgeText, '直播');
+    expect(localizedLive.isLive, isTrue);
+    expect(
+      buildVideoItemDestination(localizedLive),
+      isA<LiveEventDetailPage>(),
+    );
+
+    final upcomingPage = service.parseSearchResponse({
+      'contents': {
+        'sectionListRenderer': {
+          'contents': [
+            _shelf('Upcoming', [
+              lockupVideo(
+                'search-upcoming',
+                'Upcoming result',
+                badgeText: '即将直播',
+                badgeStyle: 'BADGE_STYLE_TYPE_SIMPLE',
+              ),
+            ]),
+          ],
+        },
+      },
+    });
+    final upcoming = upcomingPage.sections.single.videos.single;
+    expect(upcoming.thumbnailBadgeText, '即将直播');
+    expect(upcoming.isUpcoming, isTrue);
+
+    final nextPage = service.parseSearchContinuationResponse(
+      page.sections.single,
+      {
+        'continuationContents': {
+          'sectionListContinuation': {
+            'contents': [
+              _shelf('Search results', [
+                lockupVideo('search-video-next', 'Next result'),
+              ], continuationToken: 'search-next-2'),
+            ],
+          },
+        },
+      },
+    );
+
+    expect(nextPage.videos.map((item) => item.id), [
+      'search-video',
+      'search-video-next',
+    ]);
+    expect(nextPage.continuationToken, 'search-next-2');
+    expect(nextPage.videos.last.categoryId, 'search');
+  });
+
+  test('search result endpoint types keep search labels and shared routes', () {
+    final browseDestinationTile = _tile(
+      videoId: null,
+      title: 'Search browse result',
+      thumbnailUrl: 'https://example.test/search-browse.jpg',
+    );
+    browseDestinationTile['onSelectCommand'] = {
+      'browseEndpoint': {'browseId': 'FEsearch-browse'},
+    };
+
+    final page = service.parseSearchResponse({
+      'contents': {
+        'sectionListRenderer': {
+          'contents': [
+            _shelf('Search results', [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'search-video',
+                  title: 'Search video',
+                  thumbnailUrl: 'https://example.test/search-video.jpg',
+                ),
+              },
+              {
+                'tileRenderer': _tile(
+                  videoId: 'search-shorts',
+                  title: 'Search Shorts',
+                  thumbnailUrl: 'https://example.test/search-shorts.jpg',
+                  contentType: 'TILE_CONTENT_TYPE_SHORTS',
+                  useReelEndpoint: true,
+                ),
+              },
+              {
+                'tileRenderer': _tile(
+                  videoId: null,
+                  browseId: 'track-browse-id',
+                  title: 'Search track',
+                  thumbnailUrl: 'https://example.test/search-track.jpg',
+                  contentType: 'TILE_CONTENT_TYPE_TRACK',
+                ),
+              },
+              {
+                'tileRenderer': _tile(
+                  videoId: null,
+                  browseId: 'VLsearch-playlist',
+                  title: 'Search playlist',
+                  thumbnailUrl: 'https://example.test/search-playlist.jpg',
+                  contentType: 'TILE_CONTENT_TYPE_PLAYLIST',
+                ),
+              },
+              {
+                'tileRenderer': _tile(
+                  videoId: null,
+                  browseId: 'search-channel-id',
+                  title: 'Search channel',
+                  thumbnailUrl: 'https://example.test/search-channel.jpg',
+                  contentType: 'TILE_CONTENT_TYPE_CHANNEL',
+                ),
+              },
+              {'tileRenderer': browseDestinationTile},
+            ]),
+          ],
+        },
+      },
+    });
+
+    final videos = page.sections.single.videos;
+    expect(videos.map((video) => video.itemType), [
+      VideoItemType.video,
+      VideoItemType.shorts,
+      VideoItemType.track,
+      VideoItemType.playlist,
+      VideoItemType.channel,
+      VideoItemType.browseDestination,
+    ]);
+    expect(videos.map((video) => video.categoryId), everyElement('search'));
+    expect(
+      videos.map((video) => video.categoryName),
+      everyElement('Search results'),
+    );
+    expect(
+      videos.map((video) => buildVideoItemDestination(video).runtimeType),
+      [
+        VideoDetailPage,
+        ShortsDetailPage,
+        TrackDetailPage,
+        PlaylistDetailPage,
+        ChannelDetailPage,
+        BrowseEntryDetailPage,
+      ],
+    );
+  });
+
+  test('parses cluster shelf browse and search endpoint groups', () {
+    final page = service.parseSearchResponse({
+      'contents': {
+        'sectionListRenderer': {
+          'contents': [
+            {
+              'clusterShelfRenderer': {
+                'clusters': [
+                  {
+                    'clusterRenderer': {
+                      'headerRenderer': {
+                        'buttonViewModel': {
+                          'title': '王剑相关内容',
+                          'onTap': {
+                            'innertubeCommand': {
+                              'browseEndpoint': {
+                                'browseId': 'cluster-browse-id',
+                                'params': 'cluster-params',
+                              },
+                            },
+                          },
+                        },
+                      },
+                      'items': [
+                        {
+                          'tileRenderer': _tile(
+                            videoId: 'cluster-video',
+                            title: 'Cluster result',
+                            thumbnailUrl: 'https://example.test/cluster.jpg',
+                          ),
+                        },
+                      ],
+                      'loggingDirectives': <String, dynamic>{},
+                    },
+                  },
+                  {
+                    'clusterRenderer': {
+                      'headerRenderer': {
+                        'buttonViewModel': {
+                          'title': '更多王剑结果',
+                          'onTap': {
+                            'innertubeCommand': {
+                              'searchEndpoint': {'query': '王剑相关搜索'},
+                            },
+                          },
+                        },
+                      },
+                      'items': [
+                        {
+                          'tileRenderer': _tile(
+                            videoId: 'cluster-video-2',
+                            title: 'Second cluster result',
+                            thumbnailUrl:
+                                'https://example.test/cluster-video-2.jpg',
+                          ),
+                        },
+                      ],
+                      'loggingDirectives': <String, dynamic>{},
+                    },
+                  },
+                ],
+                'loggingDirectives': <String, dynamic>{},
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(page.sections, hasLength(2));
+    expect(page.sections[0].title, '王剑相关内容');
+    expect(page.sections[0].videos.single.title, 'Cluster result');
+    expect(page.sections[0].browseId, 'cluster-browse-id');
+    expect(page.sections[0].browseParams, 'cluster-params');
+    expect(page.sections[0].browseTitle, '王剑相关内容');
+    expect(page.sections[1].title, '更多王剑结果');
+    expect(page.sections[1].videos.single.title, 'Second cluster result');
+    expect(page.sections[1].searchQuery, '王剑相关搜索');
+  });
+
+  test('parses the Live TV topic feed and preserves live event routing', () {
+    Map<String, dynamic> tileWithStatus(
+      String videoId,
+      String title,
+      String status,
+    ) {
+      final tile = Map<String, dynamic>.from(
+        _tile(
+          videoId: videoId,
+          title: title,
+          thumbnailUrl: 'https://example.test/$videoId.jpg',
+        ),
+      );
+      final header = Map<String, dynamic>.from(tile['header']);
+      final tileHeader = Map<String, dynamic>.from(
+        header['tileHeaderRenderer'],
+      );
+      final overlays = List<dynamic>.from(tileHeader['thumbnailOverlays']);
+      overlays.add({
+        'thumbnailOverlayTimeStatusRenderer': {'style': status},
+      });
+      tileHeader['thumbnailOverlays'] = overlays;
+      header['tileHeaderRenderer'] = tileHeader;
+      tile['header'] = header;
+      return tile;
+    }
+
+    final response = _homeResponse([
+      _shelf('Live now', [
+        {'tileRenderer': tileWithStatus('live-video', 'Live event', 'LIVE')},
+      ], continuationToken: 'live-row-next'),
+      _shelf('Upcoming', [
+        {
+          'tileRenderer': tileWithStatus(
+            'upcoming-video',
+            'Upcoming event',
+            'UPCOMING',
+          ),
+        },
+      ]),
+    ]);
+    final sectionList =
+        response['contents']['tvBrowseRenderer']['content']['tvSurfaceContentRenderer']['content']['sectionListRenderer'];
+    sectionList['continuations'] = [
+      {
+        'nextContinuationData': {'continuation': 'live-sections-next'},
+      },
+    ];
+
+    final page = service.parseLiveBrowseResponse(response);
+    final liveVideo = page.sections.first.videos.single;
+    final upcomingVideo = page.sections.last.videos.single;
+
+    expect(page.sections.map((section) => section.title), [
+      'Live now',
+      'Upcoming',
+    ]);
+    expect(page.continuationToken, 'live-sections-next');
+    expect(page.sections.first.continuationToken, 'live-row-next');
+    expect(liveVideo.itemType, VideoItemType.video);
+    expect(liveVideo.categoryId, 'live');
+    expect(liveVideo.categoryName, 'Live now');
+    expect(liveVideo.isLive, isTrue);
+    expect(buildVideoItemDestination(liveVideo), isA<LiveEventDetailPage>());
+    expect(upcomingVideo.categoryId, 'live');
+    expect(upcomingVideo.isUpcoming, isTrue);
+    expect(
+      buildVideoItemDestination(upcomingVideo),
+      isA<LiveEventDetailPage>(),
+    );
+
+    final globalContinuation = service.parseLiveBrowseContinuationResponse({
+      'continuationContents': {
+        'sectionListContinuation': {
+          'contents': [
+            _shelf('More live', [
+              {
+                'tileRenderer': tileWithStatus(
+                  'more-live-video',
+                  'More live',
+                  'LIVE',
+                ),
+              },
+            ]),
+          ],
+          'continuations': [
+            {
+              'nextContinuationData': {'continuation': 'live-sections-next-2'},
+            },
+          ],
+        },
+      },
+    });
+    expect(globalContinuation.sections.single.videos.single.categoryId, 'live');
+    expect(globalContinuation.continuationToken, 'live-sections-next-2');
+
+    final horizontalContinuation = service.parseHomeSectionContinuationResponse(
+      page.sections.first,
+      {
+        'continuationContents': {
+          'horizontalListContinuation': {
+            'items': [
+              {
+                'tileRenderer': tileWithStatus(
+                  'live-row-video',
+                  'Another live event',
+                  'LIVE',
+                ),
+              },
+            ],
+            'continuations': [
+              {
+                'nextContinuationData': {'continuation': 'live-row-next-2'},
+              },
+            ],
+          },
+        },
+      },
+      categoryId: 'live',
+    );
+    expect(horizontalContinuation.videos.last.categoryId, 'live');
+    expect(horizontalContinuation.videos.last.isLive, isTrue);
+    expect(horizontalContinuation.continuationToken, 'live-row-next-2');
   });
 
   test(
@@ -678,7 +1371,6 @@ void main() {
           channelAvatar: '',
           views: '',
           uploadTime: '',
-          duration: '',
           thumbnailUrl: 'https://example.test/music-1.jpg',
           videoUrl: 'https://www.youtube.com/watch?v=music-1',
           categoryId: 'home',
@@ -732,7 +1424,6 @@ void main() {
           channelAvatar: '',
           views: '',
           uploadTime: '',
-          duration: '',
           thumbnailUrl: 'https://example.test/existing.jpg',
           videoUrl: 'https://www.youtube.com/watch?v=existing-video',
           categoryId: 'home',
@@ -791,7 +1482,6 @@ void main() {
           channelAvatar: '',
           views: '',
           uploadTime: '',
-          duration: '',
           thumbnailUrl: 'https://example.test/existing.jpg',
           videoUrl: 'https://www.youtube.com/watch?v=existing-video',
           categoryId: 'home',
@@ -833,7 +1523,6 @@ void main() {
           channelAvatar: '',
           views: '',
           uploadTime: '',
-          duration: '',
           thumbnailUrl: 'https://example.test/existing.jpg',
           videoUrl: 'https://www.youtube.com/watch?v=existing-video',
           categoryId: 'home',

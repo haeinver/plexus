@@ -1,16 +1,12 @@
 import 'package:flutter/material.dart';
+
 import '../../models/video.dart';
-import '../../services/mock_data_service.dart';
-import '../../widgets/video_card.dart';
 
 /// Video Detail and Player Screen
 class VideoDetailPage extends StatefulWidget {
   final Video video;
 
-  const VideoDetailPage({
-    super.key,
-    required this.video,
-  });
+  const VideoDetailPage({super.key, required this.video});
 
   @override
   State<VideoDetailPage> createState() => _VideoDetailPageState();
@@ -32,11 +28,6 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final mockService = MockDataService();
-    final relatedVideos = mockService.videos
-        .where((v) => v.id != _currentVideo.id)
-        .toList();
-
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -59,9 +50,12 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) =>
                               const Center(
-                            child: Icon(Icons.play_circle_outline,
-                                size: 64, color: Colors.white54),
-                          ),
+                                child: Icon(
+                                  Icons.play_circle_outline,
+                                  size: 64,
+                                  color: Colors.white54,
+                                ),
+                              ),
                         ),
                         Container(color: Colors.black45),
 
@@ -88,7 +82,9 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                           bottom: 0,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 4),
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
                             decoration: const BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [Colors.transparent, Colors.black87],
@@ -99,7 +95,7 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                             child: Row(
                               children: [
                                 Text(
-                                  '05:12 / ${_currentVideo.duration}',
+                                  '05:12',
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
@@ -109,7 +105,8 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                                   child: SliderTheme(
                                     data: SliderTheme.of(context).copyWith(
                                       thumbShape: const RoundSliderThumbShape(
-                                          enabledThumbRadius: 6),
+                                        enabledThumbRadius: 6,
+                                      ),
                                       trackHeight: 3,
                                     ),
                                     child: Slider(
@@ -125,19 +122,26 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                                   ),
                                 ),
                                 IconButton(
-                                  icon: const Icon(Icons.settings,
-                                      color: Colors.white, size: 20),
+                                  icon: const Icon(
+                                    Icons.settings,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
                                   tooltip: '画质设置',
                                   onPressed: () => _showQualityDialog(context),
                                 ),
                                 IconButton(
-                                  icon: const Icon(Icons.fullscreen,
-                                      color: Colors.white, size: 22),
+                                  icon: const Icon(
+                                    Icons.fullscreen,
+                                    color: Colors.white,
+                                    size: 22,
+                                  ),
                                   tooltip: '全屏',
                                   onPressed: () {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
-                                          content: Text('切至横屏4K全屏播放')),
+                                        content: Text('切至横屏4K全屏播放'),
+                                      ),
                                     );
                                   },
                                 ),
@@ -187,8 +191,9 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                     child: Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.5),
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.5,
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
@@ -230,8 +235,9 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundImage:
-                            NetworkImage(_currentVideo.channelAvatar),
+                        backgroundImage: NetworkImage(
+                          _currentVideo.channelAvatar,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -257,7 +263,8 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                         onPressed: () {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                                content: Text('已订阅 ${_currentVideo.channelName}')),
+                              content: Text('已订阅 ${_currentVideo.channelName}'),
+                            ),
                           );
                         },
                         child: const Text('订阅'),
@@ -277,9 +284,11 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                               _currentVideo.isLiked = !_currentVideo.isLiked;
                             });
                           },
-                          icon: Icon(_currentVideo.isLiked
-                              ? Icons.thumb_up
-                              : Icons.thumb_up_outlined),
+                          icon: Icon(
+                            _currentVideo.isLiked
+                                ? Icons.thumb_up
+                                : Icons.thumb_up_outlined,
+                          ),
                           label: Text('${_currentVideo.likesCount}'),
                         ),
                         const SizedBox(width: 8),
@@ -291,15 +300,19 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                             });
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text(_currentVideo.isFavorited
-                                    ? '已添加到收藏夹'
-                                    : '取消收藏'),
+                                content: Text(
+                                  _currentVideo.isFavorited
+                                      ? '已添加到收藏夹'
+                                      : '取消收藏',
+                                ),
                               ),
                             );
                           },
-                          icon: Icon(_currentVideo.isFavorited
-                              ? Icons.bookmark
-                              : Icons.bookmark_border),
+                          icon: Icon(
+                            _currentVideo.isFavorited
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                          ),
                           label: const Text('收藏'),
                         ),
                         const SizedBox(width: 8),
@@ -335,22 +348,6 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
-                  // Related Video List
-                  ...relatedVideos.map(
-                    (v) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: VideoCard(
-                        video: v,
-                        onTap: () {
-                          setState(() {
-                            _currentVideo = v;
-                            _currentSliderValue = 0.0;
-                          });
-                        },
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),

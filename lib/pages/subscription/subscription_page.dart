@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../services/mock_data_service.dart';
+
+import '../../models/channel.dart';
+import '../../models/video.dart';
 import '../../widgets/channel_tile.dart';
 import '../../widgets/video_card.dart';
 import '../player/video_detail_page.dart';
@@ -13,26 +15,28 @@ class SubscriptionPage extends StatefulWidget {
 }
 
 class _SubscriptionPageState extends State<SubscriptionPage> {
-  final MockDataService _dataService = MockDataService();
+  static const List<Channel> _channels = [];
+  static const List<Video> _feedVideos = [];
   String? _selectedChannelId;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final subscribedChannels =
-        _dataService.channels.where((c) => c.isSubscribed).toList();
-    final feedVideos = _dataService.getSubscriptionFeed();
+    final subscribedChannels = _channels.where((c) => c.isSubscribed).toList();
+    final feedVideos = _feedVideos;
 
     final filteredVideos = _selectedChannelId == null
         ? feedVideos
         : feedVideos
-            .where((v) =>
-                v.channelName ==
-                subscribedChannels
-                    .firstWhere((c) => c.id == _selectedChannelId)
-                    .name)
-            .toList();
+              .where(
+                (v) =>
+                    v.channelName ==
+                    subscribedChannels
+                        .firstWhere((c) => c.id == _selectedChannelId)
+                        .name,
+              )
+              .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -132,8 +136,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                   child: GestureDetector(
                     onTap: () {
                       setState(() {
-                        _selectedChannelId =
-                            isSelected ? null : channel.id;
+                        _selectedChannelId = isSelected ? null : channel.id;
                       });
                     },
                     child: Column(
@@ -155,8 +158,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                               ),
                               child: CircleAvatar(
                                 radius: 22,
-                                backgroundImage:
-                                    NetworkImage(channel.avatarUrl),
+                                backgroundImage: NetworkImage(
+                                  channel.avatarUrl,
+                                ),
                               ),
                             ),
                             if (channel.hasUnreadUpdate)
@@ -170,7 +174,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                                     color: colorScheme.primary,
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                        color: colorScheme.surface, width: 2),
+                                      color: colorScheme.surface,
+                                      width: 2,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -276,9 +282,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                 Expanded(
                   child: ListView.builder(
                     controller: scrollController,
-                    itemCount: _dataService.channels.length,
+                    itemCount: _channels.length,
                     itemBuilder: (context, index) {
-                      final channel = _dataService.channels[index];
+                      final channel = _channels[index];
                       return ChannelTile(channel: channel);
                     },
                   ),

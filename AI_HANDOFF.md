@@ -1,5 +1,9 @@
 # Plexus AI Handoff
 
+## 新聊天首次会话必读
+
+每次新建聊天后的首次会话，AI 都必须先将本文件从头到尾逐行完整详细读取，并把其中的项目上下文与工作约定导入自己的持久记忆（仓库记忆）。完成后再开始处理任务；不得只依赖旧聊天记录或已有记忆。后续工作仍须以当前仓库中的本文件和源代码为准，并重新核对可能过时的状态信息。
+
 本文是 Plexus 后续 AI 助手的项目上下文与工作约定。开始改首页、YouTube 数据解析或导航前，先读本文和相关源文件；不要只根据旧聊天结论推断当前代码。
 
 ## 给接手 AI 的工作提示
@@ -19,13 +23,17 @@
 - [lib/main.dart](lib/main.dart)、[lib/app.dart](lib/app.dart)：应用启动和根 widget。
 - [lib/pages/home/home_page.dart](lib/pages/home/home_page.dart)：首页 progressive feed、横栏 UI、横向单栏续载及条目导航。
 - [lib/pages/home/browse_destination_page.dart](lib/pages/home/browse_destination_page.dart)：browse endpoint 目的页及其列表续载；可通过 `destinationType` 标识 playlist、track、channel 或通用 browse 页面。
-- [lib/pages/home/item_destination_pages.dart](lib/pages/home/item_destination_pages.dart)：playlist、track、channel、browse entry MVP 页面及共享 `VideoItemType` 点击路由；首页、Browse 列表和分类音乐卡片共用 `openVideoItemDestination()`。
-- [lib/services/youtube_data_service.dart](lib/services/youtube_data_service.dart)：TVHTML5 请求、renderer 解析及全局/单栏 continuation。
+- [lib/pages/home/item_destination_pages.dart](lib/pages/home/item_destination_pages.dart)：playlist、track、channel、browse entry MVP 页面及共享 `VideoItemType` 点击路由；首页、Browse 列表和分类 feed 共用 `openVideoItemDestination()`。
+- [lib/pages/search/search_page.dart](lib/pages/search/search_page.dart)：真实搜索界面，提交、建议词、历史、按栏续载及共享条目路由均已接线；变更前以当前代码复核。
+- [lib/pages/category/category_page.dart](lib/pages/category/category_page.dart)：分类界面，拥有唯一的 Scaffold、AppBar 和分类 chips；私有 `_CategoryChip` 仅在本文件使用。音乐与游戏仍在其内容区域内切换，不 push 新路由。
+- [lib/pages/category/music_page.dart](lib/pages/category/music_page.dart)、[lib/pages/category/gaming_page.dart](lib/pages/category/gaming_page.dart)、[lib/pages/category/live_page.dart](lib/pages/category/live_page.dart)：音乐、游戏、直播内容的独立 widget 文件，嵌入原分类界面显示。
+- [lib/pages/category/category_topic_feed_page.dart](lib/pages/category/category_topic_feed_page.dart)：音乐/游戏/直播共享真实 topic feed、刷新、全局及单栏续载与条目导航；只返回内容，不创建 Scaffold/AppBar。
+- [lib/services/youtube_data_service.dart](lib/services/youtube_data_service.dart)：TVHTML5 browse/search 请求、renderer 解析及全局/单栏 continuation。
 - [lib/models/video.dart](lib/models/video.dart)：首页条目及路由语义。
 - [lib/models/video_section.dart](lib/models/video_section.dart)：首页栏/浏览页的数据和 continuation 状态。
 - [lib/pages/player/special_video_pages.dart](lib/pages/player/special_video_pages.dart)：Shorts 与直播/即将直播的 MVP 详情页面。
-- [lib/widgets/feed_continuation_status.dart](lib/widgets/feed_continuation_status.dart)：首页与音乐页共用的首次加载、下拉重建刷新和纵向 continuation 状态；加载文案由页面传入。
-- [lib/widgets/video_card.dart](lib/widgets/video_card.dart)：缩略图卡片。不要重新叠加“视频类型”角标；原缩略图/YouTube 展示已可能含有类型标签。
+- [lib/widgets/feed_continuation_status.dart](lib/widgets/feed_continuation_status.dart)：首页与分类 topic feed 共用的首次加载、下拉重建刷新和纵向 continuation 状态；加载文案由页面传入。
+- [lib/widgets/video_card.dart](lib/widgets/video_card.dart)：首页与搜索共用的缩略图卡片，只显示 `Video.thumbnailBadgeText`。角标文案来自 YouTube thumbnail overlay，可能是时长、合辑或状态文本；不要按 `itemType` 另造重复角标。`Video` 不再有独立的 `duration` 字段。
 - [test/youtube_data_service_test.dart](test/youtube_data_service_test.dart)：解析器和 endpoint/continuation 回归测试。
 
 依赖较少，主要运行方式：
@@ -106,9 +114,21 @@ flutter analyze
 
 ## Feed 加载与刷新
 
-- 首页和分类页音乐 feed 使用 `FeedInitialLoading`、`FeedRefreshIndicator`、`FeedContinuationStatus`；首次加载文案由页面显式传入，公共 widget 只统一布局和主色，不要硬编码成首页文案。
-- `FeedRefreshIndicator` 接收 `FeedRefreshCallback`，统一以 `rebuildFeed: true` 调用页面加载回调。首页和音乐页在该模式下清空旧 sections、重置对应的 feed layout generation，并在新 feed 完成后整体展示；页面的登录、数据请求和错误处理仍由页面自身负责。
+- 首页及分类界面中的音乐/游戏/直播内容使用 `FeedInitialLoading`、`FeedRefreshIndicator`、`FeedContinuationStatus`；topic feed 由 `CategoryTopicFeedPage` 共享加载和刷新行为。代码按文件拆分时保持原界面行为：分类 Scaffold、AppBar 和 chips 留在 `CategoryPage`，topic widget 只渲染内容，切换分类不 push 新路由或创建额外 Scaffold。首次加载文案由页面显式传入，公共 widget 只统一布局和主色，不要硬编码成首页文案。
+- 游戏分类使用 SmartTube `MediaServiceCore` 确认的 `FEtopics_gaming` browse ID，通过 TVHTML5 未登录请求获取真实数据。SmartTube `BrowsePresenter` 将 `TYPE_GAMING` 映射为横向 `TYPE_ROW`，`BrowseService2.getGaming()` 使用 `getBrowseRowsTV()`。实测响应为 TV `sectionListRenderer` shelf，栏标题可位于 `shelfHeaderRenderer.avatarLockup.avatarLockupRenderer.title`，视频 tile 使用 `TILE_CONTENT_TYPE_VIDEO` 与直接 `watchEndpoint`；解析继续复用严格的 topic shelf/tile parser，不要猜测或静默接受未知 renderer。topic parser 必须将 `categoryId` 传递到递归 renderer、全局 section-list continuation 和单栏 horizontal continuation；游戏条目标记为 `gaming`，`categoryName` 保留原生 shelf 标题。点击路由依据 endpoint 得出的 `VideoItemType` 并共用 `openVideoItemDestination()`，不可因来自游戏 feed 就把频道、playlist、Shorts 强制当普通 video。
+- 直播分类使用 SmartTube `MediaServiceCore` 确认的 `FEtopics_live` browse ID。SmartTube `BrowsePresenter` 将 `TYPE_LIVE` 映射为横向 `TYPE_ROW`，`BrowseService2.getLive()` 使用 `getBrowseRowsTV()`。匿名 TVHTML5 实测响应有 section-list continuation 和每栏 horizontal continuation；栏标题使用 avatar-lockup，条目为直接 `watchEndpoint` tile，直播状态通过 thumbnail overlay 的 `LIVE`/`UPCOMING` 标记。复用共享 topic feed；普通 live/upcoming video 依据状态经 `openVideoItemDestination()` 进入 `LiveEventDetailPage`。这不代表已经接入直播流播放。
+- `FeedRefreshIndicator` 接收 `FeedRefreshCallback`，统一以 `rebuildFeed: true` 调用页面加载回调。首页及分类界面内音乐/游戏/直播 feed 在该模式下清空旧 sections、重置各自的 feed layout generation，并在新 feed 完成后整体展示；页面的登录、数据请求和错误处理仍由页面自身负责。
 - 页面后续新增 feed 时，复用这些 widget；不要在页面重新直接构造不同参数的 `RefreshIndicator` 或另写一套首次加载 spinner。
+
+## 搜索界面现状
+
+- `SearchPage` 已接入真实搜索工作流：调用 `fetchSearchResults()` 与 `fetchSearchSuggestions()`，通过 `SearchHistoryStore` 保存/恢复历史，按栏续载结果，并通过 `openVideoItemDestination()` 统一处理结果点击。suggestions 是查询建议，不应描述为已验证的热门榜单。
+- 搜索结果卡片在 UI 层按原顺序跨 section 放入同一个两列网格，避免每个奇数条目 shelf 独立起网格产生空槽；browse/query 操作和加载状态仍按原 section 顺序展示，section 数据与 continuation token 不合并。
+- `YouTubeDataService` 提供 TVHTML5 `/search`、`fetchSearchResults()`、`fetchMoreSearchSectionVideos()` 和初始/continuation parser。请求以 `query` 和 TV browse context 提交，带 `racyCheckOk`、`contentCheckOk`；`estimatedResults` 可选。
+- 匿名 TV 实测响应为 `contents.sectionListRenderer.contents`，结果按 `shelfRenderer` 分组；当前样本条目为 `lockupViewModel`。标题路径为 `metadata.lockupMetadataViewModel.title`，缩略图路径为 `contentImage.thumbnailViewModel.image`，点击命令来自 `rendererContext.commandContext.onTap.innertubeCommand`。endpoint 必须继续决定 `VideoItemType`，不能将所有搜索结果强制当成 video。
+- 搜索续页应按对应 `VideoSection.continuationToken` 单栏续载；TV search continuation 当前实测外壳为 `continuationContents.sectionListContinuation`。SmartTube v2 也把响应映射为多个 `SearchSection`，并按组调用 `continueSearch()`；不要把组级 continuation 合并为首页全局分页。
+- 搜索 lockup 的图标角标可没有 `thumbnailBadgeViewModel.text`；显示文本回退到 `rendererContext.accessibilityContext.label`，状态从 `badgeStyle` 或已知本地化文案（`直播`、`正在直播`、`即将直播`）识别 LIVE/UPCOMING。无可显示文本的纯图标 badge 不应让整页分页失败。首页/tile 仍支持 `thumbnailOverlayTimeStatusRenderer.text`。只展示响应提供的文本，不根据条目类型臆造标签；结构错误用脱敏 shape 上下文报告。
+- SmartTube 搜索参考：`common/.../app/presenters/SearchPresenter.java`（提交查询、逐组更新与滚动续载、点击委派 `VideoActionPresenter`）；`MediaServiceCore/youtubeapi/.../search/v2/SearchService2.kt`、`SearchApiHelper.java`/`SearchApiHelper.kt`（TV search query、visitor data 与结果组解析）。搜索建议由本项目调用 `fetchSearchSuggestions()`；如需改变其数据来源，应以真实响应验证，不要将建议词称作热门榜单。
 
 ## SmartTube 对照资料
 
@@ -118,6 +138,8 @@ flutter analyze
 
 - `common/.../app/models/data/Video.java`：用 `videoId`、`playlistId`、`channelId`、`isLive`、`isUpcoming`、`isShorts` 等区分条目。
 - `common/.../app/presenters/dialogs/VideoActionPresenter.java`：依据视频、频道、playlist、chapter 等数据分发点击动作。
+- `common/.../app/presenters/SearchPresenter.java`：搜索提交、按组续载，点击委派统一视频动作路由。
+- `MediaServiceCore/youtubeapi/.../search/v2/SearchService2.kt`、`SearchApiHelper.kt`：TV search query、search section 分组及 continuation。
 - `common/.../app/presenters/BrowsePresenter.java`：单组滚动结束调用 `continueGroup()`。
 - `MediaServiceCore/youtubeapi/.../browse/v2/BrowseService2.kt`：区分 `continueSectionList()` 和 `continueGroupTV()`。
 - `MediaServiceCore/youtubeapi/.../next/v2/gen/WatchNextHelper.kt`：解析 `sectionListContinuation`、TV surface continuation、items、shelves 和 token。
@@ -145,6 +167,9 @@ adb pull /sdcard/plexus_screen.png "$env:TEMP\plexus_screen.png"
 - 当前 HEAD：`291fd4c`，提交标题为 `Fix YouTube home feed continuation and tile routing`。
 - 当前实现区分 item endpoint 类型、全局 section-list continuation、单栏 horizontal continuation，以及 reload-only 控制项。
 - `TILE_CONTENT_TYPE_VIDEO` 已支持经实机确认的 command executor 包装；只提取唯一媒体 endpoint，并保留已提供的 `playlistId`。测试覆盖其有效和拒绝路径。
-- 首页和音乐页共用首次加载及下拉刷新 widget；下拉时清空并重建 feed。每页提供自己的首次加载文案。
-- 最近验证：`flutter test` 通过 58 项，`flutter analyze` 无问题；原有 5 条测试 helper `use_null_aware_elements` info 已按 analyzer 建议修复。
+- 音乐/游戏/直播分别定义在独立 widget 文件中，但仍显示在分类界面的原内容区域，保留单一 AppBar、分类 chips 和原位切换；三者通过 `CategoryTopicFeedPage` 共用首次加载、下拉重建刷新、横栏续载及条目路由。
+- 分类 chips 不是跨页面复用组件；`_CategoryChip` 保持内联在 `category_page.dart`，不恢复单独的 `lib/widgets/category_chip.dart`。
+- 游戏分类通过 `FEtopics_gaming` 加载匿名真实数据；TV `sectionListRenderer`、avatar-lockup 标题和直接 `watchEndpoint` tile 结构已用匿名合成值覆盖 parser 回归测试。
+- 直播分类通过 `FEtopics_live` 加载匿名真实数据；回归测试覆盖 `LIVE`/`UPCOMING` 状态路由及两层 continuation，实机已确认显示真实直播横栏。
+- SearchPage 已接入真实查询、建议词、历史、按栏续载和共享点击路由；每次修改后仍须重新运行相关测试与 analyze，历史测试结果不代表当前工作区已验证。
 - `VideoDetailPage` 仍是项目原有的模拟播放/展示页；不要在交接说明或 UI 中声称已经接入真实视频流播放。
