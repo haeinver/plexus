@@ -50,6 +50,7 @@ class FeedContinuationStatus extends StatelessWidget {
   final String? errorMessage;
   final VoidCallback onRetry;
   final String loadingMessage;
+  final double loadingHeight;
   final String errorTitle;
   final String retryLabel;
 
@@ -59,6 +60,7 @@ class FeedContinuationStatus extends StatelessWidget {
     required this.errorMessage,
     required this.onRetry,
     this.loadingMessage = '正在加载更多首页分区...',
+    this.loadingHeight = 112,
     this.errorTitle = '首页后续内容加载失败',
     this.retryLabel = '重新加载',
   });
@@ -69,7 +71,7 @@ class FeedContinuationStatus extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     if (isLoading) {
       return SizedBox(
-        height: 112,
+        height: loadingHeight,
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,

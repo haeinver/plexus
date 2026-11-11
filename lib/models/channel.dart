@@ -1,6 +1,8 @@
 /// Model representing a Subscribed Channel / Creator
 class Channel {
   final String id;
+  final String? browseId;
+  final String? browseParams;
   final String name;
   final String avatarUrl;
   final String subscriberCount;
@@ -11,6 +13,8 @@ class Channel {
 
   Channel({
     required this.id,
+    this.browseId,
+    this.browseParams,
     required this.name,
     required this.avatarUrl,
     required this.subscriberCount,

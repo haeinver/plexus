@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/channel.dart';
 import '../models/video.dart';
 import '../models/video_section.dart';
 import 'locale_service.dart';
@@ -23,6 +24,15 @@ typedef SearchBrowsePage = ({
   List<VideoSection> sections,
   String? estimatedResults,
 });
+typedef SubscriptionBrowsePage = ({
+  List<Channel> channels,
+  List<VideoSection> sections,
+  String? continuationToken,
+});
+typedef SubscriptionChannelPage = ({
+  List<VideoSection> sections,
+  String? continuationToken,
+});
 
 abstract interface class SearchDataSource {
   Future<List<String>> fetchSearchSuggestions(String query);
@@ -30,9 +40,18 @@ abstract interface class SearchDataSource {
   Future<VideoSection> fetchMoreSearchSectionVideos(VideoSection section);
 }
 
+abstract interface class SubscriptionDataSource {
+  Future<SubscriptionBrowsePage> fetchSubscriptions();
+  Future<SubscriptionBrowsePage> fetchMoreSubscriptionSections(
+    String continuation,
+  );
+  Future<SubscriptionChannelPage> fetchSubscriptionChannelPage(Channel channel);
+  Future<VideoSection> fetchMoreSubscriptionSectionVideos(VideoSection section);
+}
+
 /// Real YouTube InnerTube API Data Service
 /// Strictly matches SmartTube V2 MediaServiceCore (QueryBuilder.kt / BrowseService2.kt / TVHTML5 Client).
-class YouTubeDataService implements SearchDataSource {
+class YouTubeDataService implements SearchDataSource, SubscriptionDataSource {
   static final YouTubeDataService _instance = YouTubeDataService._internal();
   factory YouTubeDataService() => _instance;
   YouTubeDataService._internal();
@@ -41,6 +60,7 @@ class YouTubeDataService implements SearchDataSource {
   static const String _musicBrowseId = 'FEtopics_music';
   static const String _gamingBrowseId = 'FEtopics_gaming';
   static const String _liveBrowseId = 'FEtopics_live';
+  static const String _subscriptionsBrowseId = 'FEsubscriptions';
   static const String _tvUserAgent =
       'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)';
   String? _visitorData;
@@ -159,6 +179,101 @@ class YouTubeDataService implements SearchDataSource {
     return _fetchMoreSectionVideos(section, requireAuth: true);
   }
 
+  @override
+  Future<SubscriptionBrowsePage> fetchSubscriptions() async {
+    final request = await _createHomeRequestConfig();
+    final response = await http
+        .post(
+          request.uri,
+          headers: request.headers,
+          body: json.encode(createSubscriptionsRequestBody(request.context)),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw Exception(
+        'YouTube 订阅接口响应异常 [HTTP ${response.statusCode}]: '
+        '${_shortMsg(response.body)}',
+      );
+    }
+    return parseSubscriptionsResponse(
+      _decodeResponseBody(response.body, requestContext: request.context),
+    );
+  }
+
+  @override
+  Future<SubscriptionBrowsePage> fetchMoreSubscriptionSections(
+    String continuation,
+  ) async {
+    if (continuation.isEmpty) {
+      throw const FormatException('YouTube 订阅 section-list continuation 不能为空');
+    }
+    final request = await _createHomeRequestConfig();
+    final response = await http
+        .post(
+          request.uri,
+          headers: request.headers,
+          body: json.encode(
+            createContinuationRequestBody(request.context, continuation),
+          ),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw Exception(
+        'YouTube 订阅 section-list continuation 响应异常 '
+        '[HTTP ${response.statusCode}]: ${_shortMsg(response.body)}',
+      );
+    }
+    return parseSubscriptionContinuationResponse(
+      _decodeResponseBody(response.body, requestContext: request.context),
+    );
+  }
+
+  @override
+  Future<SubscriptionChannelPage> fetchSubscriptionChannelPage(
+    Channel channel,
+  ) async {
+    final browseId = channel.browseId;
+    if (browseId == null || browseId.isEmpty) {
+      throw const FormatException('YouTube TV 订阅频道缺少 endpoint.browseId');
+    }
+    final browseParams = channel.browseParams;
+    if (browseParams == null || browseParams.isEmpty) {
+      throw const FormatException('YouTube TV 订阅频道缺少 endpoint.params');
+    }
+    final destination = VideoSection(
+      title: channel.name,
+      videos: const [],
+      browseId: browseId,
+      browseParams: browseParams,
+    );
+    final request = await _createHomeRequestConfig();
+    final response = await http
+        .post(
+          request.uri,
+          headers: request.headers,
+          body: json.encode(
+            createBrowseDestinationRequestBody(request.context, destination),
+          ),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw Exception(
+        'YouTube 订阅频道「${channel.name}」接口响应异常 '
+        '[HTTP ${response.statusCode}]: ${_shortMsg(response.body)}',
+      );
+    }
+    final data = _decodeResponseBody(
+      response.body,
+      requestContext: request.context,
+    );
+    return parseSubscriptionChannelResponse(channel, data);
+  }
+
+  @override
+  Future<VideoSection> fetchMoreSubscriptionSectionVideos(
+    VideoSection section,
+  ) => _fetchMoreSectionVideos(section, requireAuth: true);
+
   Future<VideoSection> fetchMoreMusicSectionVideos(VideoSection section) async {
     return fetchMoreCategorySectionVideos('music', section);
   }
@@ -182,6 +297,16 @@ class YouTubeDataService implements SearchDataSource {
   ) => {
     'context': context,
     'continuation': continuation,
+    'racyCheckOk': true,
+    'contentCheckOk': true,
+  };
+
+  @visibleForTesting
+  Map<String, dynamic> createSubscriptionsRequestBody(
+    Map<String, dynamic> context,
+  ) => {
+    'context': context,
+    'browseId': _subscriptionsBrowseId,
     'racyCheckOk': true,
     'contentCheckOk': true,
   };
@@ -1188,6 +1313,285 @@ class YouTubeDataService implements SearchDataSource {
       sections: sections,
       continuationToken: _homeSectionListContinuationToken(sectionList),
     );
+  }
+
+  @visibleForTesting
+  SubscriptionBrowsePage parseSubscriptionsResponse(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('YouTube TV 订阅响应不是 JSON 对象');
+    }
+    final tvContent = data['contents']?['tvBrowseRenderer']?['content'];
+    final secondaryNav = tvContent?['tvSecondaryNavRenderer'];
+    final navSections = secondaryNav?['sections'];
+    if (navSections is! List) {
+      final surfaceRenderer = tvContent?['tvSurfaceContentRenderer'];
+      final surfaceContent = surfaceRenderer?['content'];
+      final genericPromo = surfaceContent?['genericPromoRenderer'];
+      if (genericPromo is Map<String, dynamic>) {
+        final promoTitle = _extractText(genericPromo['title']);
+        final promoBody = _extractText(genericPromo['bodyText']);
+        final surfaceTitle = _extractText(
+          surfaceRenderer?['header']?['tvSurfaceHeaderRenderer']?['title'],
+        );
+        if (promoTitle == null ||
+            promoTitle.trim().isEmpty ||
+            promoBody == null ||
+            promoBody.trim().isEmpty ||
+            surfaceTitle == null ||
+            surfaceTitle.trim().isEmpty) {
+          throw FormatException(
+            'YouTube TV 无订阅 genericPromoRenderer 缺少原生标题或正文；'
+            '脱敏结构：${_describeJsonShape(surfaceRenderer)}',
+          );
+        }
+        return (
+          channels: const <Channel>[],
+          sections: const <VideoSection>[],
+          continuationToken: null,
+        );
+      }
+      throw FormatException(
+        'YouTube TV 订阅响应缺少 tvSecondaryNavRenderer.sections；'
+        '脱敏结构：${_describeJsonShape(tvContent)}',
+      );
+    }
+
+    final channels = <Channel>[];
+    Map<String, dynamic>? selectedTab;
+    for (final sectionNode in navSections) {
+      final section = sectionNode?['tvSecondaryNavSectionRenderer'];
+      if (section is! Map<String, dynamic>) {
+        throw FormatException(
+          'YouTube TV 订阅 navigation section 缺少 '
+          'tvSecondaryNavSectionRenderer；脱敏结构：'
+          '${_describeJsonShape(sectionNode)}',
+        );
+      }
+      final tabs = section['tabs'];
+      if (tabs is! List) {
+        throw FormatException(
+          'YouTube TV 订阅 secondary nav 缺少 tabs；'
+          '脱敏结构：${_describeJsonShape(section)}',
+        );
+      }
+
+      for (final tabNode in tabs) {
+        final tab = tabNode?['tabRenderer'];
+        if (tab is! Map<String, dynamic>) {
+          throw FormatException(
+            'YouTube TV 订阅 tabs 项缺少 tabRenderer；'
+            '脱敏结构：${_describeJsonShape(tabNode)}',
+          );
+        }
+        if (tab['unselectable'] == true) break;
+        if (tab['selected'] == true) {
+          if (selectedTab != null) {
+            throw FormatException(
+              'YouTube TV 订阅响应包含多个 selected tab；'
+              '脱敏结构：${_describeJsonShape(navSections)}',
+            );
+          }
+          selectedTab = tab;
+        }
+        if (tab['unselectable'] == true || tab['selected'] == true) continue;
+
+        final browseEndpoint = tab['endpoint']?['browseEndpoint'];
+        if (browseEndpoint is! Map<String, dynamic>) {
+          throw FormatException(
+            'YouTube TV 订阅 tab 缺少 endpoint.browseEndpoint；'
+            '脱敏结构：${_describeJsonShape(tab)}',
+          );
+        }
+        final browseId = browseEndpoint['browseId']?.toString();
+        if (browseId == null || browseId.isEmpty) {
+          throw FormatException(
+            'YouTube TV 订阅 tab 的 browseEndpoint 缺少 browseId；'
+            '脱敏结构：${_describeJsonShape(browseEndpoint)}',
+          );
+        }
+        final thumbnailUrl = _extractThumbnail(tab['thumbnail']);
+        if (browseId == _subscriptionsBrowseId && thumbnailUrl == null) {
+          continue;
+        }
+
+        final title = _extractText(tab['title']);
+        if (title == null || title.trim().isEmpty) {
+          throw FormatException(
+            'YouTube TV 订阅频道 tab 缺少 title；'
+            '脱敏结构：${_describeJsonShape(tab)}',
+          );
+        }
+        final tabIdentifier = tab['tabIdentifier']?.toString();
+        if (tabIdentifier == null || tabIdentifier.isEmpty) {
+          throw FormatException(
+            'YouTube TV 订阅频道 tab 缺少 tabIdentifier；'
+            '脱敏结构：${_describeJsonShape(tab)}',
+          );
+        }
+        channels.add(
+          Channel(
+            id: tabIdentifier,
+            browseId: browseId,
+            browseParams: browseEndpoint['params']?.toString(),
+            name: title,
+            avatarUrl: thumbnailUrl ?? '',
+            subscriberCount: '',
+            videoCount: '',
+            description: '',
+          ),
+        );
+      }
+    }
+    if (selectedTab == null) {
+      throw FormatException(
+        'YouTube TV 订阅响应没有 selected tab；'
+        '脱敏结构：${_describeJsonShape(navSections)}',
+      );
+    }
+    final surface = selectedTab['content']?['tvSurfaceContentRenderer'];
+    final sectionList = surface?['content']?['sectionListRenderer'];
+    if (sectionList is! Map<String, dynamic>) {
+      throw FormatException(
+        'YouTube TV 订阅 selected tab 缺少 '
+        'content.tvSurfaceContentRenderer.content.sectionListRenderer；'
+        '脱敏结构：${_describeJsonShape(selectedTab['content'])}',
+      );
+    }
+    final rawShelves = sectionList['contents'];
+    if (rawShelves is! List) {
+      throw FormatException(
+        'YouTube TV 订阅 sectionListRenderer 缺少 contents；'
+        '脱敏结构：${_describeJsonShape(sectionList)}',
+      );
+    }
+
+    return (
+      channels: channels,
+      sections: _parseHomeShelves(rawShelves, categoryId: 'subscription'),
+      continuationToken: _homeSectionListContinuationToken(sectionList),
+    );
+  }
+
+  @visibleForTesting
+  SubscriptionBrowsePage parseSubscriptionContinuationResponse(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('YouTube TV 订阅 continuation 响应不是 JSON 对象');
+    }
+    final sectionList = _continuationSectionList(data);
+    final rawShelves = sectionList?['contents'];
+    if (sectionList == null || rawShelves is! List) {
+      throw FormatException(
+        'YouTube TV 订阅 continuation 缺少 sectionListContinuation.contents；'
+        '脱敏结构：${_describeJsonShape(data)}',
+      );
+    }
+    return (
+      channels: const [],
+      sections: _parseHomeShelves(rawShelves, categoryId: 'subscription'),
+      continuationToken: _homeSectionListContinuationToken(sectionList),
+    );
+  }
+
+  @visibleForTesting
+  SubscriptionChannelPage parseSubscriptionChannelResponse(
+    Channel channel,
+    dynamic data,
+  ) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('YouTube TV 订阅频道响应不是 JSON 对象');
+    }
+    final tvContent = data['contents']?['tvBrowseRenderer']?['content'];
+    final navSections = tvContent?['tvSecondaryNavRenderer']?['sections'];
+    if (navSections is! List) {
+      throw FormatException(
+        'YouTube TV 订阅频道响应缺少 tvSecondaryNavRenderer.sections；'
+        '脱敏结构：${_describeJsonShape(tvContent)}',
+      );
+    }
+
+    final tabs = <Map<String, dynamic>>[];
+    for (final sectionNode in navSections) {
+      final section = sectionNode?['tvSecondaryNavSectionRenderer'];
+      final rawTabs = section is Map<String, dynamic> ? section['tabs'] : null;
+      if (rawTabs is! List) {
+        throw FormatException(
+          'YouTube TV 订阅频道 navigation section 缺少 tabs；'
+          '脱敏结构：${_describeJsonShape(sectionNode)}',
+        );
+      }
+      for (final tabNode in rawTabs) {
+        final tab = tabNode?['tabRenderer'];
+        if (tab is! Map<String, dynamic>) {
+          throw FormatException(
+            'YouTube TV 订阅频道 tabs 项缺少 tabRenderer；'
+            '脱敏结构：${_describeJsonShape(tabNode)}',
+          );
+        }
+        tabs.add(tab);
+      }
+    }
+
+    final requestedBrowseId = channel.browseId;
+    final requestedParams = channel.browseParams;
+    if (requestedBrowseId == null || requestedBrowseId.isEmpty) {
+      throw const FormatException('YouTube TV 订阅频道缺少 endpoint.browseId');
+    }
+    if (requestedParams == null || requestedParams.isEmpty) {
+      throw const FormatException('YouTube TV 订阅频道缺少 endpoint.params');
+    }
+
+    final selectedTabs = tabs.where((tab) => tab['selected'] == true).toList();
+    if (selectedTabs.length != 1) {
+      throw FormatException(
+        'YouTube TV 订阅频道响应要求唯一 selected tab；'
+        '脱敏结构：${_describeJsonShape(navSections)}',
+      );
+    }
+    final targetTab = selectedTabs.single;
+    final selectedEndpoint = targetTab['endpoint']?['browseEndpoint'];
+    if (selectedEndpoint is! Map<String, dynamic>) {
+      throw FormatException(
+        'YouTube TV 订阅频道 selected tab 缺少 endpoint.browseEndpoint；'
+        '脱敏结构：${_describeJsonShape(targetTab)}',
+      );
+    }
+    final responseBrowseId = selectedEndpoint['browseId']?.toString();
+    if (responseBrowseId == null || responseBrowseId != requestedBrowseId) {
+      throw FormatException(
+        'YouTube TV 订阅频道 selected tab 的 endpoint.browseId 缺失或与请求冲突；'
+        '脱敏结构：${_describeJsonShape(selectedEndpoint)}',
+      );
+    }
+    final responseParams = selectedEndpoint['params']?.toString();
+    if (responseParams != null && responseParams != requestedParams) {
+      throw FormatException(
+        'YouTube TV 订阅频道 selected tab 的 endpoint.params 与请求冲突；'
+        '脱敏结构：${_describeJsonShape(selectedEndpoint)}',
+      );
+    }
+
+    final sectionList =
+        targetTab['content']?['tvSurfaceContentRenderer']?['content']?['sectionListRenderer'];
+    if (sectionList is! Map<String, dynamic>) {
+      throw FormatException(
+        'YouTube TV 订阅频道 tab 缺少 '
+        'content.tvSurfaceContentRenderer.content.sectionListRenderer；'
+        '脱敏结构：${_describeJsonShape(targetTab['content'])}',
+      );
+    }
+    final rawShelves = sectionList['contents'];
+    if (rawShelves is! List) {
+      throw FormatException(
+        'YouTube TV 订阅频道 sectionListRenderer 缺少 contents；'
+        '脱敏结构：${_describeJsonShape(sectionList)}',
+      );
+    }
+    final sections = _parseHomeShelves(rawShelves, categoryId: 'subscription');
+    final continuationToken = _homeSectionListContinuationToken(sectionList);
+    if (sections.isEmpty && continuationToken == null) {
+      throw const FormatException('YouTube TV 订阅频道 tab 没有可解析的内容');
+    }
+    return (sections: sections, continuationToken: continuationToken);
   }
 
   @visibleForTesting

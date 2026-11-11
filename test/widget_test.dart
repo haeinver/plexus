@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plexus/app.dart';
+import 'package:plexus/models/channel.dart';
 import 'package:plexus/models/video.dart';
 import 'package:plexus/models/video_section.dart';
 import 'package:plexus/pages/category/category_page.dart';
@@ -18,9 +19,11 @@ import 'package:plexus/pages/player/special_video_pages.dart';
 import 'package:plexus/pages/player/video_detail_page.dart';
 import 'package:plexus/pages/search/search_page.dart';
 import 'package:plexus/pages/search/search_history_service.dart';
+import 'package:plexus/pages/subscription/subscription_page.dart';
 import 'package:plexus/services/youtube_data_service.dart';
 import 'package:plexus/widgets/error_state_widget.dart';
 import 'package:plexus/widgets/feed_continuation_status.dart';
+import 'package:plexus/widgets/channel_tile.dart';
 import 'package:plexus/widgets/video_card.dart';
 
 void main() {
@@ -280,6 +283,292 @@ void main() {
 
     expect(find.text('即将直播'), findsNWidgets(2));
     expect(find.text('Scheduled event'), findsOneWidget);
+  });
+
+  testWidgets('subscription page loads channels and opens channel feed', (
+    WidgetTester tester,
+  ) async {
+    final channel = Channel(
+      id: 'subscription-channel-tab',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-params',
+      name: 'Subscribed channel',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    final secondChannel = Channel(
+      id: 'subscription-channel-tab',
+      browseId: 'FEsubscriptions',
+      browseParams: 'second-channel-params',
+      name: 'Second subscribed channel',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    final dataSource = _FakeSubscriptionDataSource(
+      page: (
+        channels: [channel, secondChannel],
+        sections: [VideoSection(title: 'New uploads', videos: const [])],
+        continuationToken: null,
+      ),
+      channelSections: [
+        VideoSection(title: 'Subscribed channel uploads', videos: const []),
+        VideoSection(title: 'Second channel uploads', videos: const []),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubscriptionPage(
+          dataSource: dataSource,
+          session: _FakeSubscriptionSession(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Subscribed channel'), findsOneWidget);
+    expect(find.text('New uploads'), findsOneWidget);
+    await tester.tap(find.text('Subscribed channel'));
+    await tester.pumpAndSettle();
+
+    expect(dataSource.channelRequests, ['subscription-channel-tab']);
+    expect(find.text('Subscribed channel uploads'), findsOneWidget);
+    await tester.tap(find.text('Second subscribed channel'));
+    await tester.pumpAndSettle();
+
+    expect(dataSource.channelRequests, [
+      'subscription-channel-tab',
+      'subscription-channel-tab',
+    ]);
+    expect(find.text('Second channel uploads'), findsOneWidget);
+    await tester.tap(find.text('Second subscribed channel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Second channel uploads'), findsOneWidget);
+    expect(find.text('New uploads'), findsNothing);
+    expect(dataSource.channelParamsRequests, [
+      'channel-params',
+      'second-channel-params',
+    ]);
+
+    expect(dataSource.subscriptionRequests, 1);
+    await tester.drag(
+      find.text('Second channel uploads'),
+      const Offset(0, 420),
+    );
+    await tester.pumpAndSettle();
+
+    expect(dataSource.subscriptionRequests, 1);
+    expect(dataSource.channelParamsRequests, [
+      'channel-params',
+      'second-channel-params',
+      'second-channel-params',
+    ]);
+    expect(find.text('Second subscribed channel'), findsOneWidget);
+    expect(find.text('Second channel uploads'), findsOneWidget);
+
+    await tester.tap(find.text('Subscribed channel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Subscribed channel uploads'), findsOneWidget);
+    expect(dataSource.channelParamsRequests, [
+      'channel-params',
+      'second-channel-params',
+      'second-channel-params',
+    ]);
+
+    await tester.tap(find.text('Second subscribed channel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Second channel uploads'), findsOneWidget);
+    expect(dataSource.channelParamsRequests, [
+      'channel-params',
+      'second-channel-params',
+      'second-channel-params',
+    ]);
+  });
+
+  testWidgets('channel refresh shows one spinner while request is pending', (
+    WidgetTester tester,
+  ) async {
+    final channel = Channel(
+      id: 'refresh-channel',
+      browseId: 'FEsubscriptions',
+      browseParams: 'refresh-channel-params',
+      name: 'Refresh channel',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    final initialCompleter = Completer<SubscriptionChannelPage>();
+    final refreshCompleter = Completer<SubscriptionChannelPage>();
+    var channelRequests = 0;
+    final dataSource = _FakeSubscriptionDataSource(
+      page: (
+        channels: [channel],
+        sections: <VideoSection>[],
+        continuationToken: null,
+      ),
+      channelSections: const [],
+      onFetchChannel: (_) {
+        channelRequests++;
+        if (channelRequests == 1) {
+          return initialCompleter.future;
+        }
+        return refreshCompleter.future;
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubscriptionPage(
+          dataSource: dataSource,
+          session: _FakeSubscriptionSession(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refresh channel'));
+    await tester.pump();
+
+    final channelList = find.byWidgetPredicate(
+      (widget) => widget is ListView && widget.scrollDirection == Axis.vertical,
+    );
+    final listRect = tester.getRect(channelList);
+    final loadingStatusRect = tester.getRect(
+      find.byType(FeedContinuationStatus).first,
+    );
+    expect(find.text('正在加载频道内容...'), findsOneWidget);
+    expect(loadingStatusRect.center.dy, closeTo(listRect.center.dy, 1));
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    initialCompleter.complete((
+      sections: [
+        VideoSection(title: 'Channel uploads', videos: const []),
+        VideoSection(title: 'Channel playlists', videos: const []),
+      ],
+      continuationToken: null,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.text('Channel playlists'), const Offset(0, 420));
+    for (var frame = 0; frame < 10 && channelRequests < 2; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(channelRequests, 2);
+    expect(find.text('Channel uploads'), findsOneWidget);
+    expect(find.text('Channel playlists'), findsOneWidget);
+    expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    refreshCompleter.complete((
+      sections: [
+        VideoSection(title: 'Updated channel uploads', videos: const []),
+      ],
+      continuationToken: null,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Updated channel uploads'), findsOneWidget);
+    expect(find.byType(RefreshProgressIndicator), findsNothing);
+  });
+
+  testWidgets('subscription page shows an empty state without channels', (
+    WidgetTester tester,
+  ) async {
+    final dataSource = _FakeSubscriptionDataSource(
+      page: (
+        channels: <Channel>[],
+        sections: <VideoSection>[],
+        continuationToken: null,
+      ),
+      channelSections: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubscriptionPage(
+          dataSource: dataSource,
+          session: _FakeSubscriptionSession(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('还没有订阅频道'), findsOneWidget);
+    expect(find.text('在 YouTube 订阅频道后，内容会显示在这里。'), findsOneWidget);
+    expect(find.text('暂无相关订阅更新'), findsNothing);
+    expect(find.text('订阅内容加载失败'), findsNothing);
+  });
+
+  testWidgets('subscription page keeps the no-updates state for channels', (
+    WidgetTester tester,
+  ) async {
+    final channel = Channel(
+      id: 'subscribed-channel',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-params',
+      name: 'Subscribed channel',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    final dataSource = _FakeSubscriptionDataSource(
+      page: (
+        channels: [channel],
+        sections: <VideoSection>[],
+        continuationToken: null,
+      ),
+      channelSections: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubscriptionPage(
+          dataSource: dataSource,
+          session: _FakeSubscriptionSession(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Subscribed channel'), findsOneWidget);
+    expect(find.text('暂无相关订阅更新'), findsOneWidget);
+    expect(find.text('还没有订阅频道'), findsNothing);
+  });
+
+  testWidgets('channel tile does not fake subscribe or unsubscribe actions', (
+    WidgetTester tester,
+  ) async {
+    final channel = Channel(
+      id: 'UC-channel',
+      name: 'Channel without stats',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    var tapped = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChannelTile(channel: channel, onTap: () => tapped = true),
+        ),
+      ),
+    );
+
+    expect(find.text('已订阅频道'), findsOneWidget);
+    expect(find.byType(OutlinedButton), findsNothing);
+    expect(find.byType(FilledButton), findsNothing);
+    await tester.tap(find.text('Channel without stats'));
+    await tester.pump();
+    expect(tapped, isTrue);
+    expect(channel.isSubscribed, isTrue);
   });
 
   testWidgets('playlist browse screen identifies its item type', (
@@ -771,6 +1060,67 @@ Video _video({
   description: title,
   likesCount: 0,
 );
+
+class _FakeSubscriptionSession implements SubscriptionSession {
+  @override
+  bool get isLoggedIn => true;
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  void addAccountListener(VoidCallback listener) {}
+
+  @override
+  void removeAccountListener(VoidCallback listener) {}
+}
+
+class _FakeSubscriptionDataSource implements SubscriptionDataSource {
+  _FakeSubscriptionDataSource({
+    required this.page,
+    required this.channelSections,
+    this.onFetchChannel,
+  });
+
+  final SubscriptionBrowsePage page;
+  final List<VideoSection> channelSections;
+  final Future<SubscriptionChannelPage> Function(Channel channel)?
+  onFetchChannel;
+  final List<String> channelRequests = [];
+  final List<String?> channelParamsRequests = [];
+  int subscriptionRequests = 0;
+
+  @override
+  Future<SubscriptionBrowsePage> fetchSubscriptions() async {
+    subscriptionRequests++;
+    return page;
+  }
+
+  @override
+  Future<SubscriptionBrowsePage> fetchMoreSubscriptionSections(
+    String continuation,
+  ) async => (
+    channels: <Channel>[],
+    sections: <VideoSection>[],
+    continuationToken: null,
+  );
+
+  @override
+  Future<SubscriptionChannelPage> fetchSubscriptionChannelPage(
+    Channel channel,
+  ) async {
+    channelRequests.add(channel.id);
+    channelParamsRequests.add(channel.browseParams);
+    final fetch = onFetchChannel;
+    if (fetch != null) return fetch(channel);
+    return (sections: channelSections, continuationToken: null);
+  }
+
+  @override
+  Future<VideoSection> fetchMoreSubscriptionSectionVideos(
+    VideoSection section,
+  ) async => section;
+}
 
 class _FakeSearchDataSource implements SearchDataSource {
   _FakeSearchDataSource({

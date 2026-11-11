@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plexus/models/channel.dart';
 import 'package:plexus/models/video.dart';
 import 'package:plexus/models/video_section.dart';
 import 'package:plexus/pages/home/item_destination_pages.dart';
@@ -8,6 +9,70 @@ import 'package:plexus/services/youtube_data_service.dart';
 
 void main() {
   final service = YouTubeDataService();
+
+  Map<String, dynamic> subscriptionChannelResponse(
+    List<Map<String, dynamic>> tabs,
+  ) => {
+    'contents': {
+      'tvBrowseRenderer': {
+        'content': {
+          'tvSecondaryNavRenderer': {
+            'sections': [
+              {
+                'tvSecondaryNavSectionRenderer': {
+                  'tabs': tabs.map((tab) => {'tabRenderer': tab}).toList(),
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+  };
+
+  Map<String, dynamic> emptySubscriptionsResponse({
+    bool includeBody = true,
+    bool includeGenericPromo = true,
+  }) {
+    final surfaceContent = <String, dynamic>{};
+    if (includeGenericPromo) {
+      surfaceContent['genericPromoRenderer'] = {
+        'title': {
+          'runs': [
+            {'text': 'No subscriptions'},
+          ],
+        },
+        if (includeBody)
+          'bodyText': {
+            'runs': [
+              {'text': 'Browse YouTube to find channels'},
+            ],
+          },
+      };
+    } else {
+      surfaceContent['unknownRenderer'] = <String, dynamic>{};
+    }
+    return {
+      'contents': {
+        'tvBrowseRenderer': {
+          'content': {
+            'tvSurfaceContentRenderer': {
+              'content': surfaceContent,
+              'header': {
+                'tvSurfaceHeaderRenderer': {
+                  'title': {
+                    'runs': [
+                      {'text': 'Subscriptions'},
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+  }
 
   test('includes TV browse check flags in continuation requests', () {
     final context = <String, dynamic>{
@@ -20,6 +85,542 @@ void main() {
       'racyCheckOk': true,
       'contentCheckOk': true,
     });
+  });
+
+  test('builds an authenticated FEsubscriptions browse request', () {
+    final context = <String, dynamic>{
+      'client': {'clientName': 'TVHTML5'},
+    };
+
+    expect(service.createSubscriptionsRequestBody(context), {
+      'context': context,
+      'browseId': 'FEsubscriptions',
+      'racyCheckOk': true,
+      'contentCheckOk': true,
+    });
+  });
+
+  test('parses the native empty-subscriptions generic promo state', () {
+    final page = service.parseSubscriptionsResponse(
+      emptySubscriptionsResponse(),
+    );
+
+    expect(page.channels, isEmpty);
+    expect(page.sections, isEmpty);
+    expect(page.continuationToken, isNull);
+  });
+
+  test('rejects malformed empty-subscriptions generic promo shape', () {
+    expect(
+      () => service.parseSubscriptionsResponse(
+        emptySubscriptionsResponse(includeBody: false),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('genericPromoRenderer 缺少原生标题或正文'),
+        ),
+      ),
+    );
+  });
+
+  test('does not treat unknown empty subscription shape as an empty page', () {
+    expect(
+      () => service.parseSubscriptionsResponse(
+        emptySubscriptionsResponse(includeGenericPromo: false),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('stops subscription channel parsing at unselectable tab boundary', () {
+    final page = service.parseSubscriptionsResponse({
+      'contents': {
+        'tvBrowseRenderer': {
+          'content': {
+            'tvSecondaryNavRenderer': {
+              'sections': [
+                {
+                  'tvSecondaryNavSectionRenderer': {
+                    'tabs': [
+                      {
+                        'tabRenderer': {
+                          'endpoint': {
+                            'browseEndpoint': {'browseId': 'FEsubscriptions'},
+                          },
+                          'title': '全部动态',
+                          'selected': true,
+                          'content': {
+                            'tvSurfaceContentRenderer': {
+                              'content': {
+                                'sectionListRenderer': {
+                                  'contents': [
+                                    _shelf('Latest uploads', [
+                                      {
+                                        'tileRenderer': _tile(
+                                          videoId: 'subscription-video',
+                                          title: 'Subscribed video',
+                                          thumbnailUrl: 'https://example.test/subscription-video.jpg',
+                                        ),
+                                      },
+                                    ], continuationToken: 'shelf-next'),
+                                  ],
+                                  'continuations': [
+                                    {
+                                      'nextContinuationData': {
+                                        'continuation': 'subscriptions-next',
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                      {
+                        'tabRenderer': {
+                          'endpoint': {
+                            'browseEndpoint': {
+                              'browseId': 'FEsubscriptions',
+                              'params': 'channel-params',
+                            },
+                          },
+                          'tabIdentifier': 'subscription-channel-tab',
+                          'title': 'Subscribed channel',
+                          'thumbnail': {
+                            'thumbnails': [
+                              {
+                                'url': 'https://example.test/channel.jpg',
+                                'width': 88,
+                                'height': 88,
+                              },
+                            ],
+                          },
+                        },
+                      },
+                      {
+                        'tabRenderer': {
+                          'title': 'Unselectable tab',
+                          'unselectable': true,
+                        },
+                      },
+                      {
+                        'tabRenderer': {
+                          'endpoint': {
+                            'browseEndpoint': {
+                              'browseId': 'FEsubscriptions',
+                              'params': 'channel-params',
+                            },
+                          },
+                          'tabIdentifier': 'subscription-channel-tab',
+                          'title': 'Subscribed channel',
+                          'thumbnail': {
+                            'thumbnails': [
+                              {
+                                'url': 'https://example.test/channel.jpg',
+                                'width': 88,
+                                'height': 88,
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(page.channels, hasLength(1));
+    expect(page.channels.single.id, 'subscription-channel-tab');
+    expect(page.channels.single.browseId, 'FEsubscriptions');
+    expect(page.channels.single.browseParams, 'channel-params');
+    expect(page.channels.single.name, 'Subscribed channel');
+    expect(page.channels.single.avatarUrl, 'https://example.test/channel.jpg');
+    expect(page.channels.single.subscriberCount, isEmpty);
+    expect(page.sections, hasLength(1));
+    expect(page.sections.single.title, 'Latest uploads');
+    expect(page.sections.single.videos.single.id, 'subscription-video');
+    expect(page.sections.single.videos.single.categoryId, 'subscription');
+    expect(page.sections.single.continuationToken, 'shelf-next');
+    expect(page.continuationToken, 'subscriptions-next');
+  });
+
+  test('parses subscription section-list continuation shelves', () {
+    final page = service.parseSubscriptionContinuationResponse({
+      'continuationContents': {
+        'sectionListContinuation': {
+          'contents': [
+            _shelf('More subscribed uploads', [
+              {
+                'tileRenderer': _tile(
+                  videoId: 'subscription-video-next',
+                  title: 'Next subscribed video',
+                  thumbnailUrl:
+                      'https://example.test/subscription-video-next.jpg',
+                ),
+              },
+            ]),
+          ],
+          'continuations': [
+            {
+              'nextContinuationData': {'continuation': 'subscriptions-next-2'},
+            },
+          ],
+        },
+      },
+    });
+
+    expect(page.channels, isEmpty);
+    expect(page.sections.single.title, 'More subscribed uploads');
+    expect(page.sections.single.videos.single.id, 'subscription-video-next');
+    expect(page.continuationToken, 'subscriptions-next-2');
+  });
+
+  test('rejects subscription responses with multiple selected tabs', () {
+    final selectedContent = {
+      'tvSurfaceContentRenderer': {
+        'content': {
+          'sectionListRenderer': {'contents': <dynamic>[]},
+        },
+      },
+    };
+
+    expect(
+      () => service.parseSubscriptionsResponse(
+        subscriptionChannelResponse([
+          {'selected': true, 'content': selectedContent},
+          {'selected': true, 'content': selectedContent},
+        ]),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('多个 selected tab'),
+        ),
+      ),
+    );
+  });
+
+  test('parses every section from the matching subscription channel tab', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-two-params',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    final page = service.parseSubscriptionChannelResponse(channel, {
+      'contents': {
+        'tvBrowseRenderer': {
+          'content': {
+            'tvSecondaryNavRenderer': {
+              'sections': [
+                {
+                  'tvSecondaryNavSectionRenderer': {
+                    'tabs': [
+                      {
+                        'tabRenderer': {
+                          'tabIdentifier': 'shared-tab-identifier',
+                          'endpoint': {
+                            'browseEndpoint': {
+                              'browseId': 'FEsubscriptions',
+                              'params': 'channel-one-params',
+                            },
+                          },
+                          'content': {
+                            'tvSurfaceContentRenderer': {
+                              'content': {
+                                'sectionListRenderer': {
+                                  'contents': [_shelf('Wrong channel', [])],
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                      {
+                        'tabRenderer': {
+                          'tabIdentifier': 'shared-tab-identifier',
+                          'endpoint': {
+                            'browseEndpoint': {
+                              'browseId': 'FEsubscriptions',
+                              'params': 'channel-two-params',
+                            },
+                          },
+                          'selected': true,
+                          'content': {
+                            'tvSurfaceContentRenderer': {
+                              'content': {
+                                'sectionListRenderer': {
+                                  'contents': [
+                                    _shelf('Channel Two uploads', [
+                                      {
+                                        'tileRenderer': _tile(
+                                          videoId: 'channel-two-video',
+                                          title: 'Channel Two video',
+                                          thumbnailUrl: 'https://example.test/channel-two.jpg',
+                                        ),
+                                      },
+                                    ]),
+                                    _shelf('Channel Two playlists', [
+                                      {
+                                        'tileRenderer': _tile(
+                                          videoId: 'channel-two-video-next',
+                                          title: 'Another channel video',
+                                          thumbnailUrl: 'https://example.test/channel-two-next.jpg',
+                                        ),
+                                      },
+                                    ]),
+                                  ],
+                                  'continuations': [
+                                    {
+                                      'nextContinuationData': {
+                                        'continuation': 'channel-two-next-page',
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(page.sections, hasLength(2));
+    expect(page.sections.map((section) => section.title), [
+      'Channel Two uploads',
+      'Channel Two playlists',
+    ]);
+    expect(page.sections.first.videos.single.id, 'channel-two-video');
+    expect(page.sections.last.videos.single.id, 'channel-two-video-next');
+    expect(page.continuationToken, 'channel-two-next-page');
+  });
+
+  test('parses unique selected channel when response omits params echo', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-two-params',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    final page = service.parseSubscriptionChannelResponse(
+      channel,
+      subscriptionChannelResponse([
+        {
+          'selected': true,
+          'endpoint': {
+            'browseEndpoint': {'browseId': 'FEsubscriptions'},
+          },
+          'content': {
+            'tvSurfaceContentRenderer': {
+              'content': {
+                'sectionListRenderer': {
+                  'contents': [
+                    _shelf('Selected channel uploads', [
+                      {
+                        'tileRenderer': _tile(
+                          videoId: 'selected-channel-video',
+                          title: 'Selected channel video',
+                          thumbnailUrl:
+                              'https://example.test/selected-channel.jpg',
+                        ),
+                      },
+                    ]),
+                  ],
+                },
+              },
+            },
+          },
+        },
+        {'endpoint': null},
+      ]),
+    );
+
+    expect(page.sections.single.title, 'Selected channel uploads');
+    expect(page.sections.single.videos.single.id, 'selected-channel-video');
+  });
+
+  test('rejects selected tab when its browse params conflict with request', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-two-params',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+
+    expect(
+      () => service.parseSubscriptionChannelResponse(
+        channel,
+        subscriptionChannelResponse([
+          {
+            'tabIdentifier': channel.id,
+            'selected': true,
+            'endpoint': {
+              'browseEndpoint': {
+                'browseId': 'FEsubscriptions',
+                'params': 'different-channel-params',
+              },
+            },
+          },
+        ]),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('endpoint.params 与请求冲突'),
+        ),
+      ),
+    );
+  });
+
+  test('rejects multiple selected tabs instead of choosing one', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-two-params',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+    Map<String, dynamic> matchingTab({bool selected = false}) => {
+      'tabIdentifier': channel.id,
+      'selected': selected,
+      'endpoint': {
+        'browseEndpoint': {
+          'browseId': 'FEsubscriptions',
+          'params': 'channel-two-params',
+        },
+      },
+    };
+
+    expect(
+      () => service.parseSubscriptionChannelResponse(
+        channel,
+        subscriptionChannelResponse([
+          matchingTab(selected: true),
+          matchingTab(selected: true),
+        ]),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('唯一 selected tab'),
+        ),
+      ),
+    );
+  });
+
+  test('rejects a channel response with no selected tab', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      browseId: 'FEsubscriptions',
+      browseParams: 'channel-two-params',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+
+    expect(
+      () => service.parseSubscriptionChannelResponse(
+        channel,
+        subscriptionChannelResponse([
+          {
+            'endpoint': {
+              'browseEndpoint': {
+                'browseId': 'FEsubscriptions',
+                'params': 'channel-two-params',
+              },
+            },
+          },
+        ]),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('唯一 selected tab'),
+        ),
+      ),
+    );
+  });
+
+  test('does not substitute tab identifier for missing channel browse ID', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+
+    expect(
+      service.fetchSubscriptionChannelPage(channel),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('endpoint.browseId'),
+        ),
+      ),
+    );
+  });
+
+  test('rejects channel requests without endpoint params', () {
+    final channel = Channel(
+      id: 'tab-channel-two',
+      browseId: 'FEsubscriptions',
+      name: 'Channel Two',
+      avatarUrl: '',
+      subscriberCount: '',
+      videoCount: '',
+      description: '',
+    );
+
+    expect(
+      service.fetchSubscriptionChannelPage(channel),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('endpoint.params'),
+        ),
+      ),
+    );
   });
 
   test('builds the original SmartTube YouTube completion request', () {
