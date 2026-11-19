@@ -1,5 +1,6 @@
 import 'package:card_settings_ui/card_settings_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../services/locale_service.dart';
 
@@ -22,11 +23,14 @@ class _SettingsPageState extends State<SettingsPage> {
   final LocaleService _localeService = LocaleService();
   int _cacheSizeMb = 128;
   bool _isLoadingLocale = true;
+  String _appVersion = '';
+  String _buildNumber = '';
 
   @override
   void initState() {
     super.initState();
     _initLocale();
+    _initPackageInfo();
   }
 
   Future<void> _initLocale() async {
@@ -36,6 +40,15 @@ class _SettingsPageState extends State<SettingsPage> {
         _isLoadingLocale = false;
       });
     }
+  }
+
+  Future<void> _initPackageInfo() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    if (!mounted) return;
+    setState(() {
+      _appVersion = packageInfo.version;
+      _buildNumber = packageInfo.buildNumber;
+    });
   }
 
   void _showLanguageDialog() {
@@ -151,12 +164,18 @@ class _SettingsPageState extends State<SettingsPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text('应用名称：Plexus'),
-              SizedBox(height: 8),
-              Text('核心架构：Flutter 3.x + MD3 UI Toolkit'),
-              SizedBox(height: 8),
-              Text('解包模块：InnerTube & OAuth 2.0 Device Flow'),
+            children: [
+              const Text('应用名称：Plexus'),
+              const SizedBox(height: 8),
+              Text(_appVersion.isEmpty ? '应用版本：读取中' : '应用版本：$_appVersion'),
+              if (_buildNumber.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('构建号：$_buildNumber'),
+              ],
+              const SizedBox(height: 8),
+              const Text('核心架构：Flutter 3.x + MD3 UI Toolkit'),
+              const SizedBox(height: 8),
+              const Text('解包模块：InnerTube & OAuth 2.0 Device Flow'),
             ],
           ),
           actions: [
@@ -257,7 +276,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     SettingsTile.navigation(
                       leading: const Icon(Icons.info_outline),
                       title: const Text('关于 Plexus'),
-                      value: const Text('v1.0.0'),
+                      value: Text(
+                        _appVersion.isEmpty ? '读取中' : 'v$_appVersion',
+                      ),
                       onPressed: (_) => _showAboutDialog(),
                     ),
                   ],

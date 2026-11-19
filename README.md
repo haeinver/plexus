@@ -2,6 +2,10 @@
 
 [中文](README.md) | [English](README_EN.md)
 
+<p align="center">
+  <img src="assets/icon/app_icon.png" alt="Plexus icon" width="128">
+</p>
+
 Plexus 是一个使用 Flutter 和 Material 3 构建的 YouTube TV 客户端，面向 Android、Windows、Linux、macOS、iOS 和 Web。它以真实 TV HTML5 浏览数据为基础，提供首页、分类、搜索、订阅和视频详情功能。
 
 ## 免责声明与版权声明
@@ -136,6 +140,17 @@ lib/
 - 未知 renderer 或缺失必需字段应抛出明确错误，不应静默降级。
 - 播放源和播放控制应与页面 UI 分层。
 - 修改 Dart 文件后运行格式化、相关测试和分析。
+
+## 发布与版本 Tag
+
+推送符合 `v*.*.*` 格式的 Git 标签会自动构建并发布 Release：
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions 会构建 3 种 Android ABI APK，以及 Windows、Linux、macOS、Web 和未签名 iOS 包，自动汇总从上一个 `v*.*.*` tag 到当前 tag 的提交标题和提交正文，并生成完整差异比较链接与 SHA-256 校验清单。iOS 未签名包不能直接用于 App Store 或未授权设备；如需签名安装或上架，需要配置 Apple 签名证书和描述文件。
 
 ## 许可证
 

@@ -1,0 +1,249 @@
+name: Build and Publish Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Android APKs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Run analysis
+        run: flutter analyze
+
+      - name: Build Android split APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: Rename APK artifacts
+        shell: bash
+        run: |
+          set -e
+          version="${GITHUB_REF_NAME:-manual}"
+          source="build/app/outputs/flutter-apk"
+          cp "$source/app-arm64-v8a-release.apk" "plexus-$version-android-arm64-v8a.apk"
+          cp "$source/app-armeabi-v7a-release.apk" "plexus-$version-android-armeabi-v7a.apk"
+          cp "$source/app-x86_64-release.apk" "plexus-$version-android-x86_64.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: plexus-*-android-*.apk
+
+  windows:
+    name: Windows package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Package Windows release
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "manual" }
+          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "plexus-$version-windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: plexus-*-windows-x64.zip
+
+  linux:
+    name: Linux package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev libstdc++-12-dev
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build linux --release
+
+      - name: Package Linux release
+        run: |
+          version="${GITHUB_REF_NAME:-manual}"
+          tar -C build/linux/x64/release/bundle -czf "plexus-$version-linux-x64.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: plexus-*-linux-x64.tar.gz
+
+  macos:
+    name: macOS package
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Package macOS release
+        shell: bash
+        run: |
+          set -e
+          version="${GITHUB_REF_NAME:-manual}"
+          app_path=$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app_path"
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "plexus-$version-macos.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-package
+          path: plexus-*-macos.zip
+
+  web:
+    name: Web package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build web --release
+
+      - name: Package Web release
+        run: |
+          version="${GITHUB_REF_NAME:-manual}"
+          cd build/web
+          tar -czf "../../plexus-$version-web.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-package
+          path: plexus-*-web.tar.gz
+
+  ios:
+    name: iOS package
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned iOS app
+        shell: bash
+        run: |
+          set -e
+          version="${GITHUB_REF_NAME:-manual}"
+          app_path=$(find build/ios/iphoneos -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app_path"
+          ditto -c -k --sequesterRsrc "$app_path" "plexus-$version-ios-unsigned.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-package
+          path: plexus-*-ios-unsigned.zip
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [android, windows, linux, macos, web, ios]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout complete tag history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release archive list and checksums
+        run: |
+          cd release-assets
+          sha256sum * | sort > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Generate changes since previous tag
+        shell: bash
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -e
+          current="$CURRENT_TAG"
+          previous=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -Fxv "$current" | head -n 1)
+
+          {
+            echo "## What changed"
+            echo
+
+            if [ -n "$previous" ]; then
+              echo "Changes between [$previous]($REPOSITORY_URL/tree/$previous) and [$current]($REPOSITORY_URL/tree/$current):"
+              echo
+              git log --reverse --date=short --format='- `%h` %s%n%n  %b' "$previous..$current"
+              echo
+              echo "**Full comparison:** [$previous...$current]($REPOSITORY_URL/compare/$previous...$current)"
+            else
+              echo "Initial release or no previous semantic version tag was found."
+              echo
+              git log --reverse --date=short --format='- `%h` %s%n%n  %b' "$current"
+            fi
+
+            echo
+            echo "## Release assets"
+            echo
+            echo "SHA-256 checksums are provided in \`SHA256SUMS.txt\`."
+          } > RELEASE_NOTES.md
+
+          cat RELEASE_NOTES.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: release-assets/*
