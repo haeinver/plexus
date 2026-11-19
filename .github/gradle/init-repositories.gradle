@@ -1,0 +1,16 @@
+// GitHub-hosted runners intermittently fail to resolve Kotlin artifacts from the
+// Gradle Plugin Portal mirror (https://plugins.gradle.org/m2), returning broken
+// POMs for org.jetbrains.kotlin:*.
+//
+// Flutter's included build (packages/flutter_tools/gradle) resolves its own
+// plugin classpath against the *default* plugin repository set, i.e. only the
+// Gradle Plugin Portal. Adding Maven Central and Google before any settings file
+// is evaluated makes the canonical repositories available to every build in the
+// composite, including included builds.
+beforeSettings { settings ->
+    settings.pluginManagement.repositories {
+        mavenCentral()
+        google()
+        gradlePluginPortal()
+    }
+}
