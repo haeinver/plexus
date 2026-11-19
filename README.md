@@ -53,6 +53,8 @@ Plexus 是一个使用 Flutter 和 Material 3 构建的 YouTube TV 客户端，�
 - Dart 3.13.5 或兼容版本
 - Android 构建需要 JDK 17 和已配置的 Android SDK
 - Windows 桌面构建需要对应的 Flutter Windows 工具链
+- Linux 构建需要 `libwebkit2gtk-4.1-dev`（应用内授权页使用 WebKitGTK），运行分发包的机器需要安装 `webkit2gtk-4.1`
+- Windows 运行应用内授权页需要 Microsoft Edge WebView2 Runtime（Windows 10/11 通常已预装）
 
 ## 安装与运行
 
@@ -130,7 +132,8 @@ lib/
 - `media_kit` 与 `media_kit_video`
 - `youtube_explode_dart`
 - `flutter_secure_storage`
-- `flutter_inappwebview`
+- `webview_all`（跨平台应用内 WebView）
+- `url_launcher`
 - HTTP / YouTube TV HTML5 API
 
 ## 开发约定

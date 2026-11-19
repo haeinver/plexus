@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_all/webview_all.dart';
 
 import '../../services/youtube_auth_service.dart';
 
@@ -147,6 +148,30 @@ class _LoginPageState extends State<LoginPage> {
     _isWebViewOpen = false;
   }
 
+  Future<void> _openAuthorizationExternally(String userCode, String url) async {
+    await Clipboard.setData(ClipboardData(text: userCode));
+
+    final normalizedUrl = url.startsWith('http') ? url : 'https://$url';
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse(normalizedUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      launched = false;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          launched ? '配对码已复制，请在浏览器中完成授权' : '配对码已复制，请手动访问 $normalizedUrl',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -283,9 +308,11 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.open_in_browser),
-                        tooltip: '在应用内打开授权页',
-                        onPressed: () =>
-                            _openAuthorization(userCode, activationUrl),
+                        tooltip: '在浏览器中打开授权页',
+                        onPressed: () => _openAuthorizationExternally(
+                          userCode,
+                          activationUrl,
+                        ),
                       ),
                     ],
                   ),
@@ -418,14 +445,45 @@ class _AuthorizationWebViewPage extends StatefulWidget {
 }
 
 class _AuthorizationWebViewPageState extends State<_AuthorizationWebViewPage> {
-  InAppWebViewController? _controller;
+  late final WebViewController _controller;
   int _progress = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onProgress: (progress) {
+            if (mounted && progress != _progress) {
+              setState(() => _progress = progress);
+            }
+          },
+          onWebResourceError: (error) {
+            debugPrint('Authorization WebView error: ${error.description}');
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
   Future<void> _handleBack() async {
-    if (await _controller?.canGoBack() ?? false) {
-      await _controller?.goBack();
+    if (await _controller.canGoBack()) {
+      await _controller.goBack();
     } else if (mounted) {
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _openInBrowser() async {
+    try {
+      await launchUrl(
+        Uri.parse(widget.url),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // Nothing else to offer: the embedded page stays visible.
     }
   }
 
@@ -439,6 +497,13 @@ class _AuthorizationWebViewPageState extends State<_AuthorizationWebViewPage> {
           onPressed: _handleBack,
         ),
         title: const Text('账号授权'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.open_in_browser),
+            tooltip: '在浏览器中打开',
+            onPressed: _openInBrowser,
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -446,15 +511,7 @@ class _AuthorizationWebViewPageState extends State<_AuthorizationWebViewPage> {
             LinearProgressIndicator(
               value: _progress == 0 ? null : _progress / 100,
             ),
-          Expanded(
-            child: InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-              onWebViewCreated: (controller) => _controller = controller,
-              onProgressChanged: (_, progress) {
-                if (mounted) setState(() => _progress = progress);
-              },
-            ),
-          ),
+          Expanded(child: WebViewWidget(controller: _controller)),
         ],
       ),
     );

@@ -53,6 +53,8 @@ Plexus uses `youtube_explode_dart` and an Android SDK-less YouTube client to res
 - Dart 3.13.5 or a compatible SDK
 - JDK 17 and a configured Android SDK for Android builds
 - The corresponding Flutter desktop toolchain for Windows builds
+- `libwebkit2gtk-4.1-dev` for Linux builds (the in-app authorization page uses WebKitGTK); machines running the Linux bundle need `webkit2gtk-4.1`
+- Microsoft Edge WebView2 Runtime for the in-app authorization page on Windows (usually preinstalled on Windows 10/11)
 
 ## Installation and Running
 
@@ -130,7 +132,8 @@ lib/
 - `media_kit` and `media_kit_video`
 - `youtube_explode_dart`
 - `flutter_secure_storage`
-- `flutter_inappwebview`
+- `webview_all` for the cross-platform in-app WebView
+- `url_launcher`
 - HTTP / YouTube TV HTML5 APIs
 
 ## Development Conventions
