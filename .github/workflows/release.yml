@@ -51,12 +51,15 @@ jobs:
   windows:
     name: Windows package
     runs-on: windows-latest
+    env:
+      CXXFLAGS: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+      CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
     steps:
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.7"
           cache: true
 
       - run: flutter pub get
@@ -82,11 +85,11 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev libstdc++-12-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev libsecret-1-dev libstdc++-12-dev libwebkit2gtk-4.1-dev
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.7"
           cache: true
 
       - run: flutter pub get
