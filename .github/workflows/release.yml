@@ -217,7 +217,9 @@ jobs:
         run: |
           set -e
           current="$CURRENT_TAG"
-          previous=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -Fxv "$current" | head -n 1)
+          # `grep` exits 1 when the tag list only contains the current tag (first
+          # release). With pipefail that would abort the step, so keep it optional.
+          previous=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -Fxv "$current" | head -n 1 || true)
 
           {
             echo "## What changed"
