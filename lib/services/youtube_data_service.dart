@@ -65,6 +65,8 @@ class YouTubeDataService implements SearchDataSource, SubscriptionDataSource {
       'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)';
   String? _visitorData;
 
+  String? get visitorData => _visitorData;
+
   String _topicBrowseId(String categoryId) => switch (categoryId) {
     'music' => _musicBrowseId,
     'gaming' => _gamingBrowseId,

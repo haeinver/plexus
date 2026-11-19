@@ -33,7 +33,7 @@
 - [lib/models/video.dart](lib/models/video.dart)：首页条目及路由语义。
 - [lib/models/video_section.dart](lib/models/video_section.dart)：首页栏/浏览页的数据和 continuation 状态。
 - [lib/pages/player/special_video_pages.dart](lib/pages/player/special_video_pages.dart)：Shorts 与直播/即将直播的 MVP 详情页面。
-- [lib/pages/player/video_detail_page.dart](lib/pages/player/video_detail_page.dart)：普通视频当前详情页；截至本次交接更新仍是模拟播放 UI，并未接入媒体 source。
+- [lib/pages/player/video_detail_page.dart](lib/pages/player/video_detail_page.dart)：普通视频当前详情页；截至本次交接更新已接入 `media_kit` 真实播放（进度/时长/seek/全屏/错误均由 player state 驱动），source 由 `YouTubeVideoPlaybackService` 提供，加载失败时显示可重试的真实错误；当前受 YouTube 网络风控影响，详见文末 2026-11-14 记录。
 - [lib/widgets/feed_continuation_status.dart](lib/widgets/feed_continuation_status.dart)：首页与分类 topic feed 共用的首次加载、下拉重建刷新和纵向 continuation 状态；加载文案由页面传入。
 - [lib/widgets/video_card.dart](lib/widgets/video_card.dart)：首页与搜索共用的缩略图卡片，只显示 `Video.thumbnailBadgeText`。角标文案来自 YouTube thumbnail overlay，可能是时长、合辑或状态文本；不要按 `itemType` 另造重复角标。`Video` 不再有独立的 `duration` 字段。
 - [test/youtube_data_service_test.dart](test/youtube_data_service_test.dart)：解析器和 endpoint/continuation 回归测试。
@@ -213,4 +213,150 @@ adb pull /sdcard/plexus_screen.png "$env:TEMP\plexus_screen.png"
 - 直播分类通过 `FEtopics_live` 加载匿名真实数据；回归测试覆盖 `LIVE`/`UPCOMING` 状态路由及两层 continuation，实机已确认显示真实直播横栏。
 - SearchPage 已接入真实查询、建议词、历史、按栏续载和共享点击路由；每次修改后仍须重新运行相关测试与 analyze，历史测试结果不代表当前工作区已验证。
 - SubscriptionPage 已按认证 `FEsubscriptions` response 加载频道 tabs 和 section-list 视频，支持频道 browse、section-list 与单栏续载；尚未实现远端订阅/取消订阅操作。
-- `VideoDetailPage` 仍是项目原有的模拟播放/展示页；`media_kit` 依赖已声明但 `lib/` 尚未集成真实 source/player。不要在交接说明或 UI 中声称已经接入真实视频流播放。
+- 截至 2026-11-11 的历史状态：`VideoDetailPage` 是模拟播放/展示页，`lib/` 未集成 `media_kit` source/player。当前进展见下方 2026-11-12 与 2026-11-14 记录。
+
+## 播放器进展（2026-11-12）
+
+- `VideoDetailPage` 已接入 `media_kit` `Player`/`VideoController`，播放、暂停、完成、缓冲、进度、时长、seek、全屏和 dispose 使用真实播放器状态；不显示伪造的订阅/点赞/下载成功反馈。source 解析和播放器 UI 分离，临时 stream URL 不写入 `Video`。
+- `YouTubeVideoPlaybackService` 目前只请求 SmartTube 当前 `AppClient.TV` 对应的 TVHTML5 profile；实验性 PO-token provider 从同一个 `/tv` 页面会话读取 visitorData 和 living-room id。调试 probe 仅输出这些字段是否存在，以及 Authorization、X-Goog-Pageid 是否存在；不输出 video ID、header 值、原始 logger message、URL、token 或 stack trace。
+- PHM110 实测两个普通推荐视频：TV `/player` manifest 请求均由 `youtube_explode_dart 3.1.0` 返回 `VideoUnavailableException`，没有得到可播放格式。该库的 TV 请求没有实现 SmartTube 的 TV PO-token 流程；`VideoUnavailableException` 只说明库没有提取到可用 streams，不能据此宣称视频源已播放或确定服务器端具体拒绝原因。
+- Plexus 已添加实验性的 Android TV PO-token provider：从同一个 `/tv` 页面读取 visitor/living-room id，从 `tv_config` 读取 request key，并按 SmartTube 当前实现使用 TV `/att/get` challenge；修正了 `tv_config` 的反 XSSI 前缀及 PO-token URL-safe Base64 编码。PHM110 在上述请求下仍收到 HTTP 200、`playabilityStatus=UNPLAYABLE`、无 `formats`/`adaptiveFormats`；尝试使用 `tv_config.challengeParams.R` 也未改变结果。字段存在不代表 token 被服务器接受，真实播放仍未验证成功。
+- SmartTube `AppClient.TV` 标记 `isTvPotRequired`，播放请求使用 `PoTokenGate.getPoToken()` 与 `getLivingRoomPoTokenId()`。`TvPoTokenProvider` 需要同一 `/tv` session 的 visitor data、living-room token id、`tv_config` BotGuard request key/challenge，并通过 `TvPoTokenWebView4` 生成 TV PO token；只向 `YoutubeApiClient` 添加 TV headers/clientVersion 或 visitorData 不等价于这条链路。
+- SmartTube `VideoInfoService.CLIENT_LIST` 包含 TV client rotation，但每项由完整 `AppClient`/`QueryBuilder`/PO-token/signature-decipher 流程执行。不要将 `TV_DOWNGRADED` 简化成另一个 `YoutubeApiClient` profile 后声称等价；Plexus 已移除该不完整 fallback。
+- 当前详情页在 source 解析失败时显示可重试的 `FormatException:` 错误；小屏播放器错误区限高并可滚动。真实视频播放仍受网络出口限制，不能将实验性 PO-token 调查作为可用修复；后续继续补 source/state/失败/dispose 测试并在授权可播放视频上做真机验证。
+- 最近一次验证：`flutter test test/video_playback_service_test.dart` 的 18 项通过，相关服务和测试的 `flutter analyze` 通过。经用户确认，本轮在已连接的 SM S9280 上测试了单个公开视频：认证请求的 Authorization 存在、X-Goog-Pageid 不存在，但仍为 HTTP 200 / `UNPLAYABLE`；同一 TV PO-token 会话去掉认证 header 后返回 `LOGIN_REQUIRED`，本次对比不支持移除认证作为修复。对照 SmartTube 后，已将 TV `/att/get` 请求的 Content-Type 改为 `application/json+protobuf` 并添加回归断言（**此判断后来被推翻，见“`/att/get` 头部修正”一节**）；修正后的真机重试未到达 `/player`，PO-token 初始化先后遇到 `tv_player_script` 超时和 `tv_page` HandshakeException，之后又有一次重试在等待超过 60 秒后仍停留在加载界面、没有新的 `/player` probe，因此尚不能判断该修正是否恢复播放。该设备不是 PHM110，仍需在 PHM110 上复测。
+
+## 播放器修复（2026-11-14）
+
+- 默认播放链路不再经过 TV PO-token：`YouTubeVideoPlaybackService` 现在直接用 `YoutubeApiClient.androidSdkless` 请求 manifest，并继续把登录 header 作为可选项附加。原因是实测该客户端无需 PO token 就能返回可播放格式，而 TVHTML5 在相同视频上返回 `VideoUnplayableException`/`UNPLAYABLE`。
+- `youtube_explode_dart 3.1.0` 的 `androidSdkless` 实测返回 1 条 muxed（360p）和 26 条 adaptive。`_sourcesFromManifest()` 优先用 adaptive video-only 流配对一条 audio-only 流（优先 AAC，其次 Opus），最高保留 1080p；没有 adaptive 轨道时回退到 muxed/HLS muxed。
+- `VideoPlaybackSource` 增加 `audioUri`。`VideoDetailPage` 打开 video-only 源后通过 `player.setAudioTrack(AudioTrack.uri(...))` 加载外部音轨；暂停/播放/seek 仍由 `media_kit` 状态驱动。
+- 已在 Windows 桌面用真实公开视频做端到端探针：解析到 1080p adaptive 源，`media_kit` 播放到 4 秒、时长 3:33、选中 AAC 外部音轨、无 error 事件。该探针只是本机验证，Android 真机仍需复测。
+- `android/app/src/main/AndroidManifest.xml` 已补上 `android.permission.INTERNET`；此前只有 debug/profile manifest 带该权限，release 包无法联网。
+- TV PO-token/BotGuard 实验实现及资产已弃用并移除，不是当前播放依赖，不再出现在源码、测试、资源或第三方许可清单中。
+
+### PHM110 真机复测：YouTube 反机器人拦截（2026-11-14 晚）
+
+- 结论先行：当前 PHM110 的网络出口被 YouTube 判定为“机器人流量”，匿名播放绝大多数视频都会返回 `playabilityStatus=LOGIN_REQUIRED`、`reason="Sign in to confirm you’re not a bot"`。同一网络下官方 SmartTube（`org.smarttube.stable`）也只能停在 “SABR server requested a player response reload”，因此这不是 Plexus 的解析/播放代码问题，而是网络出口 + 账号鉴权（PO token/SABR）问题。
+- 设备出口与 PC 出口都是云主机 IP，均被拦截：PHM110 走 `Clash Meta` TUN（`tun0`）到 `52.197.139.226`（AWS 东京），PC 走 FlClash 到 `54.255.247.79`（AWS 新加坡）；`adb reverse tcp:17890 tcp:7890` 把手机流量转给 PC 代理后结果相同。设备上系统 `http_proxy` 对 Flutter `dart:io` 无效，应用仍走 TUN（已用应用内 egress 探针确认）。
+- 用一个固定视频 `dQw4w9WgXcQ` 做对照：匿名 /player 返回 `OK` + adaptive 流；而推荐页的真实视频（如 `C0I8PPJsrmA`）返回 `LOGIN_REQUIRED`。用设备上的 curl 直连 YouTube 复现了同样结果，并逐一排除了客户端差异：ANDROID / IOS / ANDROID_VR / MWEB / WEB、补 `CONSENT` 与 `VISITOR_INFO1_LIVE` cookie、补 watch 页 `visitorData` + `playbackContext.signatureTimestamp` 均仍是 `LOGIN_REQUIRED`。
+- 登录态请求的实测矩阵（PHM110、真实 TV OAuth token）：
+  - `ANDROID`（`androidSdkless`，带/不带 API key）、`IOS`、`ANDROID_VR`、`WEB` → `HTTP 400` / `INVALID_ARGUMENT` / “Request contains an invalid argument.”，说明该 TV OAuth token 与这些客户端不匹配。
+  - `TVHTML5` → `HTTP 200` / `UNPLAYABLE` / `reason="The page needs to be reloaded."`，无 `formats`/`adaptiveFormats`/`serverAbrStreamingUrl`/`videoPlaybackUstreamerConfig`。即 token 只被 TV 客户端接受，但 TV 客户端仍需要有效的 PO token / SABR 上下文才会下发流。
+- 因此现在的代码状态是“正确的降级链，但环境不允许成功”：默认 `androidSdkless` + 登录 header，失败后匿名重试；两条路径在 PHM110 上都会被 `LOGIN_REQUIRED` 拦住。不要把 `dQw4w9WgXcQ` 的成功当成通用结论。
+- 本轮新增的调试探针（均 `kDebugMode` 且 `manifestLoader == null` 时输出，不打印 token/URL/videoId）：
+  - `阶段：egress`：用 `https://api64.ipify.org` 记录应用实际出口 IP，用于判断 VPN/代理走向。
+  - `YouTube player error body`：`code/status/message（截断）/reasons`，用于定位 400 这类非 200 响应。
+  - player 响应摘要新增 `reason=`（截断 120 字符），用于看清 `UNPLAYABLE`/`LOGIN_REQUIRED` 的具体原因文本。
+- 下一步建议（按优先级）：
+  1. 换能通过 YouTube 机器校验的出口（住宅/移动网络或服务商标注可看 YouTube 的节点），再用推荐页真实视频复测；如果换节点后匿名就 OK，则无需改客户端。
+  2. 若必须留在云主机 IP，则需重新评估并验证 SABR 或其他可支持的播放链路；已移除的 TV PO-token 实验不应恢复为临时修复。
+  3. 复测前先清理手机代理设置：`adb -s a4512963 shell settings put global http_proxy :0`，并 `adb -s a4512963 reverse --remove-all`（本轮曾临时设成 `127.0.0.1:17890`）。
+- 本轮未提交任何 commit；`flutter analyze` 无问题。真机“可播放”仍未验证成功。
+
+### SmartTube 上游调研 + 客户端矩阵复测（2026-11-14 深夜）
+
+- 看了 SmartTube 仓库的相关讨论（issue `#4287`、`#6030`）。`#6030` 已有 1000+ 条回复，就是本轮同款故障：视频无限加载/播放不了，官方 YouTube 客户端正常。yuliskov 在 32.65+ 用 “playback fixes”（SABR 相关）修了一部分，之后 32.67 继续修 `SABR: fail over from stalling media networks`（PR `#6320`）。他在同帖明确说 Revanced/Morphe “still have problems from time to time”。
+- SmartTube 的做法不是“换个 client 就完事”，而是 **WebView 里跑 BotGuard 生成 PO token**：logcat 里能看到 `TvPoTokenWebView4: Generated poToken`，player 脚本是 `tv-player-ias-tcl.js`，且 PO token 有 12 小时有效期（`expiration=43200s`）。本仓库的 `assets/po_token2.html`（移植自 MediaServiceCore，MIT，见 `THIRD_PARTY_NOTICES.md`）与 `YouTubeTvPoTokenProvider` 走的就是这条路线，方向没错，但还没打通。
+- 同帖还有一条有用但不同因的线索：部分用户“无限加载”是后台 app 抢 CPU（例：VLC 占满一个核）+ DNS 问题，PO token/JS 解释器跑得极慢，force-stop 后 3~7 秒开播。这类延迟不要和 `LOGIN_REQUIRED` 混为一谈。
+- 本轮用设备上的 curl 跑了一版 7 客户端矩阵（`/data/local/tmp/probe/probe11.sh`，视频 `C0I8PPJsrmA`，均带 watch 页 `visitorData` + `signatureTimestamp`）：
+  - `ANDROID` / `IOS` / `ANDROID_VR` / `MWEB` → `LOGIN_REQUIRED`，“Sign in to confirm you’re not a bot”。
+  - `ANDROID_TESTSUITE` → `UNPLAYABLE` “This video is not available”（该客户端基本已废弃）。
+  - `TVHTML5_SIMPLY_EMBEDDED_PLAYER` → `ERROR` “YouTube is no longer supported in this application or device”（已下线）。
+  - `WEB_EMBEDDED_PLAYER` → `ERROR` “This video is unavailable”。
+  - 结论：**客户端轮换对当前拦截无效**，不要再用“换 profile”当解法。
+- 同一出口 IP 上把视频换成 `dQw4w9WgXcQ`，`ANDROID`/`IOS`/`ANDROID_VR`/`MWEB` 全部 `OK`，同时返回 adaptive + muxed + 直链 URL **和** `serverAbrStreamingUrl`。这说明现在的拦截是**按视频的机器人风控**，不是整站 IP 封禁；`serverAbrStreamingUrl` 存在也不代表没有直链，`media_kit` 该走直链仍能走。
+- 当轮出口：设备 `18.181.219.42` / IPv6 `2406:da14:1913:4300:...`（AWS 东京，Clash Meta TUN），PC `18.141.176.109`（AWS 新加坡）——PC 侧代理其实仍在生效，所以“PC 直连对比”还没真正做过。
+- 登录态的结构性限制（已确认，不是 bug）：`youtube_auth_service.dart` 用的是 SmartTube 的 **TV OAuth**（`_tvClientId`，`/o/oauth2/device/code`），这类 token 只有 `TVHTML5` 接受；其它客户端一律 `400 INVALID_ARGUMENT`。而 `TVHTML5` 现在要求 SABR/PO token 才出流，`media_kit` 不能播 SABR。因此“登录 + 非 TV 客户端”这条路在当前架构下走不通，别反复试。
+- 本轮验证：`flutter analyze` 无问题；`flutter test` **122 项全部通过**（含 `video_playback_service_test.dart` 的 adaptive 配对、muxed 回退、匿名重试、摘要脱敏等 23 项）。
+- 目前剩下两条互斥路线，需要用户拍板：
+  1. **换出口**（住宅/移动网络，或服务商明确标注可看 YouTube 的节点），然后直接用推荐页真实视频复测。代码大概率不用改。
+  2. **打通 TVHTML5 的 PO token + SABR**：把 `YouTubeTvPoTokenProvider` 的 `serviceIntegrityDimensions.poToken`、`clientVersion`、`visitorData`、`livingRoomPoTokenId` 与 `/tv` 会话对齐，并处理 “The page needs to be reloaded.” 的重试语义。即便打通，若响应只给 SABR 不给直链，`media_kit` 仍然播不了——需要额外做 SABR→fMP4 代理，属于大工程。
+
+### PC 侧对照实验：拦截发生在服务端（决定性证据，2026-11-14）
+
+为回答“能不能不依赖网络”，在 PC 上做了三组对照（同一出口 IP、同一时刻）：
+
+1. **同一客户端、同一请求形状，只换 videoId**：`ANDROID` + `androidSdkless` 请求
+   - `C0I8PPJsrmA` → `LOGIN_REQUIRED` / “Sign in to confirm you're not a bot”，响应里**连 `videoDetails` 都没有**（服务端在解析视频前就拒绝）。
+   - `dQw4w9WgXcQ` → `OK`，30 个 itag。
+   - 两者请求只差 `videoId`，没有任何客户端字段能翻转结果。
+2. **用真实 Chrome 打开 youtube.com 的播放页**（`potest.js` / `webtest.js` / `freshtest.js`，puppeteer-core + 本机 Chrome）：
+   - `C0I8PPJsrmA` 页面直接显示“请登录，以便我们确认你不是聊天机器人”。
+   - `dQw4w9WgXcQ` 正常播放（`readyState=4`，`currentTime` 在走）。
+   - 换**全新无痕配置**（全新 `visitorData`、无 cookie、无历史）结果完全相同。
+   - 结论：**YouTube 自己的网页在这个 IP 上也播不了该视频**。不是 Plexus 的客户端行为问题，也不是会话/visitorData 被标记。
+3. **PO token 实测**：按 bgutil（yt-dlp 生态）的做法在真实 Chrome 里现造 token——取首页 `window.ytAtN({'R': '...'})` 的挑战（`\xNN` 转义，需要先解码再 `JSON.parse`），加载解释器执行 BotGuard，`GenerateIT` 得到 integrity token，再 mint 出 `visitorData` 绑定的 poToken（长度 521，`ttl=43200`，即 12 小时）。
+   - 带 token 与不带 token 的 player 响应**逐字段完全一致**：被拦的仍然 `LOGIN_REQUIRED`，能播的仍然 `UNPLAYABLE / “需要重新加载页面”`。
+   - 即 PO token 在本 IP 上不改变判定。注意 `/att/get` 拿到的挑战生成的 token 会被拒，必须用首页 `ytAtN` 的挑战（bgutil 源码已注明），否则实验会得到“加了等于没加”的假结论。
+
+补充事实（影响架构选择）：
+- 现在只有 **`ANDROID` 客户端返回直链**（`adaptiveFormats[].url`）。`WEB` 客户端对能播的视频返回的是 `adaptive=26, directUrl=0, sabr=1`，即**只给 SABR**，`media_kit` 播不了。
+- `MWEB` / `ANDROID_VR` 在有 `visitorData` + `signatureTimestamp` 时仍返回直链，但同样受机器人风控约束。
+- 所以“任意网络都能播”只剩两条路：**登录态**（风控提示本身就是让你登录）或 **实现 SABR 播放**。
+
+下一步（需要账号配合，二选一）：
+- **A. 验证登录态 + TVHTML5**：用 TV 设备码授权拿真实 token，配合首页挑战 mint 出的 TV poToken 请求 `TVHTML5`，看是否返回直链。返回直链就能在现有 `media_kit` 架构里直接修好；只返回 SABR 则这条路封死。
+- **B. 验证登录态 + cookie（MWEB）**：在浏览器/WebView 里登录拿到 cookie，用 `MWEB`（仍给直链）发请求，验证机器人拦截是否消失。这条最可能同时满足“任意网络 + media_kit”，代价是要在 App 里加网页登录 UI 和 cookie/`SAPISIDHASH` 维护。
+
+### 结论收口：匿名播放无法绕过网络风控（2026-11-14 深夜续）
+
+上一节留的 A 路（登录态 + TVHTML5）已实测，结果是**否定**。本轮新增的证据与代码改动：
+
+#### `/att/get` 头部修正（推翻 2026-11-14 早先的判断）
+
+- 真实浏览器里 `/youtubei/v1/att/get` 必须用 `Content-Type: application/json`；用 `application/json+protobuf` 会得到 `400` + “Invalid value (), JSPB Fava message don't accept top-level braces.”。
+- 已改 `youtube_tv_po_token_provider.dart` 的 `_buildTvAttGetHeaders()` 并同步更新测试断言。`GenerateIT`（`/api/jnn/v1/GenerateIT`）仍然使用 `application/json+protobuf`，因为它的 body 是 `[requestKey, response]` 这种 JSPB 数组，不要一起改。
+- `LIVING_ROOM_PO_TOKEN_ID` 的 `\u003d` 反转义此前已在代码里（`replaceAll(r'\u003d', '=')`），本轮确认正确。
+
+#### `params: 'CgIQBg=='` 是**广告**播放上下文，不是可用解法
+
+- 这个值解码是字节 `0a 02 10 06`。加上它以后 `ANDROID`/`IOS`/`MWEB` 的 playability 检查确实从 `LOGIN_REQUIRED` 变成 `OK`，也返回 35 条 adaptive + 1 条 muxed 直链——看起来“绕过成功”。
+- 但响应实际是**广告上下文**：`is_ad=1`、`adformat=0_6`、`pltype=adpromoted`（`ptrackingUrl` 里同样是 `ptype=adpromoted`）。这些广告 URL 全部 `HTTP 403`，加不带 `pot` 都一样。
+- 5 个被拦视频（`C0I8PPJsrmA`、`gR3lN5rkH9k`、`a4IIm-vGCu4`、`q_eFl5juJtg`、`jNQXAC9IVRw`）全部 403；对照 `dQw4w9WgXcQ` 无论加不加 `params` 都是 206。PC 和手机两个出口结论一致。
+- 因此 `params` 不是修复，**不要提交这条路径**。
+
+#### 全客户端扫描：14 个客户端没有一个能播
+
+用 yt-dlp `_base.py` 的 `INNERTUBE_CLIENTS` 里的全部 profile（含各自的 `userAgent`、`PLAYER_PARAMS`、`SUPPORTS_AD_PLAYBACK_CONTEXT`）在同一出口 `13.250.121.47` 上打同一个被拦视频：
+
+- `web` / `web_safari` / `web_creator` / `android` / `android_vr` / `ios` / `visionos` / `mweb` / `tv_downgraded` / `tv_samsung` → `LOGIN_REQUIRED`。
+- `web_embedded` → `ERROR` “This video is unavailable”；`web_music` / `tv_simply` → `UNPLAYABLE`。
+- `tv`（TVHTML5 匿名）→ `OK`，但只给 1 条 muxed 直链（itag 18），取流 `403`；adaptive 全部无 `url`（只给 `serverAbrStreamingUrl`，`sabr=1`）。没有 `hlsManifestUrl` / `dashManifestUrl` 可用。
+- 结论：**客户端轮换、`params`、PO token 三条路都不改变结果**。
+
+#### PO token 绑定规则（来自 yt-dlp，已被本轮实验印证）
+
+- yt-dlp `_video.py` 明确：**PLAYER token 绑定 `videoId`**（并且要求 `visitor_data` 存在），**GVS token 绑定 `visitorData`**（除非命中 `html5_generate_content_po_token` 实验，那时也绑 `videoId`）。
+- GVS token 不是由服务端回填，而是 yt-dlp 自己拼到媒体 URL 上：`fmt_url = update_url_query(fmt_url, {'pot': po_token})`（`_video.py:3583`）。
+- 之前按 `visitorData` 铸 player token，所以服务端直接忽略（`pot=false`），这是“加了等于没加”的原因。
+- 按正确绑定重铸（player→`videoId`，gvs→`visitorData`）后：player 仍是 `LOGIN_REQUIRED`；媒体 URL 依次试 `no pot` / `pot=visitorData` / `pot=videoId` 全部 `403`。
+- 把同一批 token 交给 yt-dlp（`po_token=mweb.player+…;po_token=mweb.gvs+…`）也一样是 “Sign in to confirm you're not a bot”。即**不是我们的请求形状写错**。
+
+#### 登录态 + TVHTML5：仍然拿不到可播直链
+
+- TV 设备码授权拿到的真实 OAuth token 只被 `TVHTML5` 接受（`ANDROID`/`IOS`/`MWEB`/`WEB` 都是 `400 INVALID_ARGUMENT`，body 已核对不是 JSON 写坏）。
+- 用 TV 自己的 requestKey（`Z1elNkAKLpSR3oPOUMSN`）+ 三种绑定（`video` / `living` / `visitor`）分别请求：`noToken` / `videoTok` / `livingTok` / `visitorTok` 全部 `UNPLAYABLE` + “The page needs to be reloaded.”。
+- 排除了 `signatureTimestamp` 过期的可能：从 `/tv` 页 `player_url` 拉到的 `tv-player-es6.js` 里 `signatureTimestamp` 就是 **20767**，与请求里用的值一致。
+- 带 `params` 的登录态请求虽然 `OK`，但 adaptive 全是 SABR、唯一 muxed（itag 18）取流 `403`。
+- 结论：**A 路封死**，而且即使用户愿意登录也不行。
+
+#### 因此现在的代码行为
+
+- 保持 `androidSdkless` 为默认客户端 + 登录 header → 失败后匿名重试（不动）。
+- 新增：`_PlaybackResponseProbeClient` 现在在**所有 build**（不只 debug）记录 `/youtubei/v1/player` 的 `playabilityStatus.status/reason`，`_resolveSources()` 用它把失败翻译成用户能行动的文案（`playabilityFailureMessage`）：
+  - 机器人风控 → “YouTube 要求先验证「你不是机器人」…这项检查按网络出口判定：请关闭代理/VPN，或改用其它网络（例如手机流量）后重试。”
+  - 年龄限制 → 提示需要已通过年龄验证的账号。
+  - 其它 `LOGIN_REQUIRED` → 提示需要登录。
+  - 其它情况保持原来的通用诊断文案（仍然不输出 URL/token/videoId）。
+- 详情页本来就有“重试”按钮，文案变准确即可，没有新增 UI 组件。
+- 本轮验证：`flutter analyze` 无问题；`flutter test` **127 项全部通过**（`video_playback_service_test.dart` 28 项，新增 5 项风控文案分类断言 + `/att/get` 头部断言改为 `application/json`）。
+- 端到端验证（PC，真实 network）：用生产 `YouTubeVideoPlaybackService` 直接解析 `C0I8PPJsrmA`，debug probe 打印 `playabilityStatus=LOGIN_REQUIRED` / `reason=Sign in to confirm you’re not a bot`，抛出的异常文案即为新的“请关闭代理/VPN，或改用其它网络”提示。该验证用临时测试跑完后已删除（不留在仓库里）。
+- 真机（PHM110 `/a4512963`）：已 `flutter build apk --debug` 并安装、启动。首页停在登录门控（符合预期），搜索页先 `TimeoutException after 0:00:08`、重试后 `HandshakeException: Connection terminated during handshake`，说明当时设备侧的代理隧道不可用，**未能截到详情页新文案的截图**。设备网络恢复后需补一次截图确认（预期：详情页显示“YouTube 要求先验证「你不是机器人」…”+ 重试按钮）。
+- 仍然**没有提交任何 commit**。
+
+#### 还剩的唯一有效手段
+
+1. **换出口**：住宅宽带或移动数据直连（不要经过云主机/VPN 出口）。这是本轮所有证据指向的唯一无需改代码的解。
+2. **登录 + cookie（MWEB）**：需要在 App 内做网页登录并维护 cookie/`SAPISIDHASH`，尚未验证；但 TV token 已证明无效，只有网页会话可能有效。
+3. **SABR 播放**：`media_kit` 不支持 `serverAbrStreamingUrl`，要做 SABR→fMP4 代理，属于大工程。
