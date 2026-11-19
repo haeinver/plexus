@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'home/home_page.dart';
 import 'category/category_page.dart';
 import 'subscription/subscription_page.dart';
@@ -35,10 +36,7 @@ class _MainScreenState extends State<MainScreen> {
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: pages,
-      ),
+      body: IndexedStack(index: _currentIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {

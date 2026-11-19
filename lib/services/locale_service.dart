@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -69,8 +70,8 @@ class LocaleService {
     final sysLocale = _getSystemLocale();
     final sysLang = sysLocale.languageCode == 'zh'
         ? (sysLocale.countryCode == 'TW' || sysLocale.countryCode == 'HK'
-            ? 'zh-TW'
-            : 'zh-CN')
+              ? 'zh-TW'
+              : 'zh-CN')
         : '${sysLocale.languageCode}-${sysLocale.countryCode ?? "US"}';
     final sysRegion = sysLocale.countryCode ?? 'CN';
 
@@ -84,7 +85,9 @@ class LocaleService {
         _language = savedLang;
       }
 
-      if (savedRegion == null || savedRegion.isEmpty || savedRegion == 'system') {
+      if (savedRegion == null ||
+          savedRegion.isEmpty ||
+          savedRegion == 'system') {
         _region = sysRegion;
       } else {
         _region = savedRegion;

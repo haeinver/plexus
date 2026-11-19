@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+
 import '../models/youtube_account.dart';
 import 'locale_service.dart';
 
@@ -14,7 +16,8 @@ class YouTubeAuthService {
   YouTubeAuthService._internal();
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
-  final ObserverList<VoidCallback> _accountListeners = ObserverList<VoidCallback>();
+  final ObserverList<VoidCallback> _accountListeners =
+      ObserverList<VoidCallback>();
 
   // SmartTube Standard YouTube TV OAuth Credentials & Fallbacks
   static const String _defaultClientId =
@@ -58,12 +61,15 @@ class YouTubeAuthService {
   }
 
   /// Active Auth State
-  bool get isLoggedIn => _selectedAccount != null && _selectedAccount!.refreshToken.isNotEmpty;
+  bool get isLoggedIn =>
+      _selectedAccount != null && _selectedAccount!.refreshToken.isNotEmpty;
   YouTubeAccount? get selectedAccount => _selectedAccount;
   List<YouTubeAccount> get accounts => List.unmodifiable(_accounts);
 
-  String get userName => _selectedAccount?.name ?? _selectedAccount?.channelHandle ?? '未登录用户';
-  String get userEmail => _selectedAccount?.email ?? (_selectedAccount?.channelHandle ?? '');
+  String get userName =>
+      _selectedAccount?.name ?? _selectedAccount?.channelHandle ?? '未登录用户';
+  String get userEmail =>
+      _selectedAccount?.email ?? (_selectedAccount?.channelHandle ?? '');
   String get userAvatar => _selectedAccount?.avatarImageUrl ?? '';
 
   String? get accessToken => _accessToken;
@@ -79,7 +85,8 @@ class YouTubeAuthService {
     } catch (_) {}
 
     if (_deviceId == null || _deviceId!.isEmpty) {
-      _deviceId = 'plexus_dev_${DateTime.now().millisecondsSinceEpoch}_${(1000 + (9000 * (DateTime.now().microsecond / 1000000))).toInt()}';
+      _deviceId =
+          'plexus_dev_${DateTime.now().millisecondsSinceEpoch}_${(1000 + (9000 * (DateTime.now().microsecond / 1000000))).toInt()}';
       try {
         await _storage.write(key: 'yt_device_id', value: _deviceId);
       } catch (_) {}
@@ -95,17 +102,19 @@ class YouTubeAuthService {
   /// Attempts to extract live client_id & client_secret from YouTube TV app JS (matching SmartTube ClientData regex)
   Future<void> _fetchDynamicClientData() async {
     try {
-      final response = await http.get(
-        Uri.parse('https://www.youtube.com/tv'),
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (PlayStation 4 5.05) AppleWebKit/601.2 (KHTML, like Gecko) Cobalt/17.168300-qa (gzip)',
-        },
-      ).timeout(const Duration(seconds: 3));
+      final response = await http
+          .get(
+            Uri.parse('https://www.youtube.com/tv'),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (PlayStation 4 5.05) AppleWebKit/601.2 (KHTML, like Gecko) Cobalt/17.168300-qa (gzip)',
+            },
+          )
+          .timeout(const Duration(seconds: 3));
 
       if (response.statusCode == 200) {
-        final scriptMatch = RegExp(r'src="([^"]*?(?:app|tv-player|m=base)[^"]*?\.js)"')
-            .firstMatch(response.body);
+        final scriptMatch = RegExp(
+          r'src="([^"]*?(?:app|tv-player|m=base)[^"]*?\.js)"',
+        ).firstMatch(response.body);
         if (scriptMatch != null) {
           var scriptUrl = scriptMatch.group(1)!;
           if (scriptUrl.startsWith('//')) {
@@ -120,8 +129,8 @@ class YouTubeAuthService {
 
           if (jsResponse.statusCode == 200) {
             final idMatch = RegExp(
-                    r'clientId:"([-\w]+\.apps\.googleusercontent\.com)",\n?[$\w]+:"(\w+)"')
-                .firstMatch(jsResponse.body);
+              r'clientId:"([-\w]+\.apps\.googleusercontent\.com)",\n?[$\w]+:"(\w+)"',
+            ).firstMatch(jsResponse.body);
             if (idMatch != null) {
               _clientId = idMatch.group(1)!;
               _clientSecret = idMatch.group(2)!;
@@ -158,7 +167,8 @@ class YouTubeAuthService {
         return DeviceCodeResult(
           deviceCode: data['device_code']?.toString() ?? '',
           userCode: data['user_code']?.toString() ?? '',
-          verificationUrl: data['verification_url']?.toString() ??
+          verificationUrl:
+              data['verification_url']?.toString() ??
               data['user_code_url']?.toString() ??
               'https://youtube.com/activate',
           interval: (data['interval'] as num?)?.toInt() ?? 5,
@@ -171,7 +181,8 @@ class YouTubeAuthService {
           return await getDeviceCode();
         }
         return DeviceCodeResult.error(
-            '获取设备码失败 (${response.statusCode}): ${response.body}');
+          '获取设备码失败 (${response.statusCode}): ${response.body}',
+        );
       }
     } catch (e) {
       return DeviceCodeResult.error('网络连接错误: $e');
@@ -202,7 +213,9 @@ class YouTubeAuthService {
 
         if (accessToken != null && refreshToken != null) {
           _accessToken = accessToken;
-          _tokenExpiryTime = DateTime.now().add(Duration(seconds: expiresIn - 60));
+          _tokenExpiryTime = DateTime.now().add(
+            Duration(seconds: expiresIn - 60),
+          );
 
           return AccessTokenResult.success(
             accessToken: accessToken,
@@ -255,7 +268,9 @@ class YouTubeAuthService {
         if (accessToken != null) {
           if (tokenToUse == _selectedAccount?.refreshToken) {
             _accessToken = accessToken;
-            _tokenExpiryTime = DateTime.now().add(Duration(seconds: expiresIn - 60));
+            _tokenExpiryTime = DateTime.now().add(
+              Duration(seconds: expiresIn - 60),
+            );
           }
           return accessToken;
         }
@@ -278,15 +293,18 @@ class YouTubeAuthService {
 
     // Step A: Fetch real Google Account Profile via OAuth2 UserInfo API
     try {
-      final userInfoResponse = await http.get(
-        Uri.parse('https://www.googleapis.com/oauth2/v3/userinfo'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 6));
+      final userInfoResponse = await http
+          .get(
+            Uri.parse('https://www.googleapis.com/oauth2/v3/userinfo'),
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(const Duration(seconds: 6));
 
       userInfoStatus = userInfoResponse.statusCode;
       if (userInfoResponse.statusCode == 200) {
-        final Map<String, dynamic> userInfoData =
-            json.decode(userInfoResponse.body);
+        final Map<String, dynamic> userInfoData = json.decode(
+          userInfoResponse.body,
+        );
         userInfoName = userInfoData['name']?.toString();
         userInfoEmail = userInfoData['email']?.toString();
         userInfoPicture = userInfoData['picture']?.toString();
@@ -306,12 +324,12 @@ class YouTubeAuthService {
       await localeService.init();
 
       final uri = Uri.parse(
-          'https://www.youtube.com/youtubei/v1/account/accounts_list?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8');
+        'https://www.youtube.com/youtubei/v1/account/accounts_list?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+      );
       final headers = {
         'Authorization': 'Bearer $accessToken',
         'Content-Type': 'application/json',
-        'User-Agent':
-            'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
+        'User-Agent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
       };
       final body = json.encode({
         'context': {
@@ -323,13 +341,13 @@ class YouTubeAuthService {
             'utcOffsetMinutes': localeService.utcOffsetMinutes,
             'hl': localeService.language,
             'gl': localeService.region,
-          }
+          },
         },
         'accountReadMask': {
           'returnOwner': true,
           'returnBrandAccounts': true,
           'returnPersonaAccounts': false,
-        }
+        },
       });
 
       final response = await http
@@ -346,8 +364,9 @@ class YouTubeAuthService {
           final accountSectionList =
               contents[0]['accountSectionListRenderer']?['contents'] as List?;
           if (accountSectionList != null && accountSectionList.isNotEmpty) {
-            final items = accountSectionList[0]['accountItemSectionRenderer']
-                ?['contents'] as List?;
+            final items =
+                accountSectionList[0]['accountItemSectionRenderer']?['contents']
+                    as List?;
             if (items != null) {
               for (final item in items) {
                 final accountItem = item['accountItem'];
@@ -356,30 +375,35 @@ class YouTubeAuthService {
                   final name =
                       _extractText(accountItem['accountName']) ?? userInfoName;
                   final email =
-                      _extractText(accountItem['accountByline']) ?? userInfoEmail;
-                  final channelHandle =
-                      _extractText(accountItem['channelHandle']);
+                      _extractText(accountItem['accountByline']) ??
+                      userInfoEmail;
+                  final channelHandle = _extractText(
+                    accountItem['channelHandle'],
+                  );
                   final avatarUrl =
                       _extractThumbnail(accountItem['accountPhoto']) ??
-                          userInfoPicture;
-                  final pageIdToken =
-                      _extractPageIdToken(accountItem['serviceEndpoint']);
+                      userInfoPicture;
+                  final pageIdToken = _extractPageIdToken(
+                    accountItem['serviceEndpoint'],
+                  );
                   final isSelected = accountItem['isSelected'] == true;
                   final hasChannel = accountItem['hasChannel'] != false;
 
                   final id = pageIdToken ?? (email ?? name ?? refreshToken);
 
-                  fetchedAccounts.add(YouTubeAccount(
-                    id: id,
-                    name: name,
-                    email: email,
-                    channelHandle: channelHandle,
-                    avatarImageUrl: avatarUrl,
-                    refreshToken: refreshToken,
-                    pageIdToken: pageIdToken,
-                    isSelected: isSelected,
-                    hasChannel: hasChannel,
-                  ));
+                  fetchedAccounts.add(
+                    YouTubeAccount(
+                      id: id,
+                      name: name,
+                      email: email,
+                      channelHandle: channelHandle,
+                      avatarImageUrl: avatarUrl,
+                      refreshToken: refreshToken,
+                      pageIdToken: pageIdToken,
+                      isSelected: isSelected,
+                      hasChannel: hasChannel,
+                    ),
+                  );
                 }
               }
             }
@@ -395,14 +419,16 @@ class YouTubeAuthService {
     // Step C: If UserInfo succeeded, use it to construct or enrich primary account
     if (userInfoName != null || userInfoEmail != null) {
       if (fetchedAccounts.isEmpty) {
-        fetchedAccounts.add(YouTubeAccount(
-          id: userInfoEmail ?? refreshToken,
-          name: userInfoName,
-          email: userInfoEmail,
-          avatarImageUrl: userInfoPicture,
-          refreshToken: refreshToken,
-          isSelected: true,
-        ));
+        fetchedAccounts.add(
+          YouTubeAccount(
+            id: userInfoEmail ?? refreshToken,
+            name: userInfoName,
+            email: userInfoEmail,
+            avatarImageUrl: userInfoPicture,
+            refreshToken: refreshToken,
+            isSelected: true,
+          ),
+        );
       } else {
         for (var i = 0; i < fetchedAccounts.length; i++) {
           final acc = fetchedAccounts[i];
@@ -440,7 +466,9 @@ class YouTubeAuthService {
   }
 
   void _mergeAccount(YouTubeAccount newAccount) {
-    final index = _accounts.indexWhere((a) => a == newAccount || (a.id == newAccount.id && a.id.isNotEmpty));
+    final index = _accounts.indexWhere(
+      (a) => a == newAccount || (a.id == newAccount.id && a.id.isNotEmpty),
+    );
     if (index != -1) {
       _accounts[index] = newAccount;
     } else {
@@ -579,11 +607,15 @@ class YouTubeAuthService {
   /// Save accounts list to secure storage
   Future<void> _persistAccounts() async {
     try {
-      final accountsJson = jsonEncode(_accounts.map((a) => a.toJson()).toList());
+      final accountsJson = jsonEncode(
+        _accounts.map((a) => a.toJson()).toList(),
+      );
       await _storage.write(key: 'yt_accounts_list', value: accountsJson);
       if (_selectedAccount != null) {
         await _storage.write(
-            key: 'yt_selected_account_id', value: _selectedAccount!.id);
+          key: 'yt_selected_account_id',
+          value: _selectedAccount!.id,
+        );
       } else {
         await _storage.delete(key: 'yt_selected_account_id');
       }
@@ -703,12 +735,12 @@ class AccessTokenResult {
   }
 
   const AccessTokenResult.pending({this.isSlowDown = false})
-      : accessToken = '',
-        refreshToken = '',
-        expiresIn = 0,
-        isSuccess = false,
-        isPending = true,
-        errorMsg = null;
+    : accessToken = '',
+      refreshToken = '',
+      expiresIn = 0,
+      isSuccess = false,
+      isPending = true,
+      errorMsg = null;
 
   factory AccessTokenResult.error(String msg) {
     return AccessTokenResult(

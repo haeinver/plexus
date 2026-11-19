@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../pages/auth/login_page.dart';
 
 /// Reusable Widget for SmartTube SignInError prompt
@@ -56,9 +57,7 @@ class SignInRequiredWidget extends StatelessWidget {
               onPressed: () async {
                 final result = await Navigator.push<bool>(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => const LoginPage(),
-                  ),
+                  MaterialPageRoute(builder: (context) => const LoginPage()),
                 );
                 if (result == true && onLoginSuccess != null) {
                   onLoginSuccess!();

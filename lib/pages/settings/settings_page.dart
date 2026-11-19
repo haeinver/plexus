@@ -1,5 +1,6 @@
 import 'package:card_settings_ui/card_settings_ui.dart';
 import 'package:flutter/material.dart';
+
 import '../../services/locale_service.dart';
 
 /// Settings Page (使用 card_settings_ui 2.0.1 打造的卡片式设置界面)
@@ -68,8 +69,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     Text(
                       entry.value,
                       style: TextStyle(
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
                       ),
                     ),
                     const Spacer(),
@@ -119,8 +121,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     Text(
                       entry.value,
                       style: TextStyle(
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
                       ),
                     ),
                     const Spacer(),
@@ -169,9 +172,11 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final langName = LocaleService.supportedLanguages[_localeService.language] ??
+    final langName =
+        LocaleService.supportedLanguages[_localeService.language] ??
         _localeService.language;
-    final regionName = LocaleService.supportedRegions[_localeService.region] ??
+    final regionName =
+        LocaleService.supportedRegions[_localeService.region] ??
         _localeService.region;
 
     return Scaffold(
@@ -236,8 +241,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   _cacheSizeMb = 0;
                                 });
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('已成功清除应用视频缓存')),
+                                  const SnackBar(content: Text('已成功清除应用视频缓存')),
                                 );
                               },
                         child: Text(_cacheSizeMb == 0 ? '已清除' : '清理缓存'),

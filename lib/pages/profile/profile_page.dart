@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../services/youtube_auth_service.dart';
 import '../auth/login_page.dart';
 import '../settings/settings_page.dart';
@@ -67,9 +68,8 @@ class _ProfilePageState extends State<ProfilePage> {
       await _authService.logout();
       if (mounted) {
         setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已成功退出当前账号')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已成功退出当前账号')));
       }
     }
   }
@@ -140,42 +140,50 @@ class _ProfilePageState extends State<ProfilePage> {
                                 children: [
                                   ListTile(
                                     selected: isSelected,
-                                    selectedTileColor: colorScheme.primaryContainer
+                                    selectedTileColor: colorScheme
+                                        .primaryContainer
                                         .withValues(alpha: 0.3),
                                     leading: CircleAvatar(
                                       backgroundColor: isSelected
                                           ? colorScheme.primaryContainer
                                           : colorScheme.surfaceContainerHighest,
-                                      backgroundImage: acc.avatarImageUrl != null &&
+                                      backgroundImage:
+                                          acc.avatarImageUrl != null &&
                                               acc.avatarImageUrl!.isNotEmpty
                                           ? NetworkImage(acc.avatarImageUrl!)
                                           : null,
-                                      child: (acc.avatarImageUrl == null ||
+                                      child:
+                                          (acc.avatarImageUrl == null ||
                                               acc.avatarImageUrl!.isEmpty)
                                           ? Icon(
                                               Icons.person,
                                               color: isSelected
                                                   ? colorScheme.primary
-                                                  : colorScheme.onSurfaceVariant,
+                                                  : colorScheme
+                                                        .onSurfaceVariant,
                                             )
                                           : null,
                                     ),
                                     title: Text(
-                                      acc.name ?? acc.channelHandle ?? 'YouTube 账号',
-                                      style: theme.textTheme.bodyLarge?.copyWith(
-                                        fontWeight: isSelected
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
-                                        color: isSelected
-                                            ? colorScheme.primary
-                                            : colorScheme.onSurface,
-                                      ),
+                                      acc.name ??
+                                          acc.channelHandle ??
+                                          'YouTube 账号',
+                                      style: theme.textTheme.bodyLarge
+                                          ?.copyWith(
+                                            fontWeight: isSelected
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                            color: isSelected
+                                                ? colorScheme.primary
+                                                : colorScheme.onSurface,
+                                          ),
                                     ),
                                     subtitle: Text(
                                       acc.email ?? acc.channelHandle ?? '',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
                                     ),
                                     trailing: isSelected
                                         ? Icon(
@@ -302,8 +310,8 @@ class _ProfilePageState extends State<ProfilePage> {
                     backgroundColor: isLoggedIn
                         ? colorScheme.primaryContainer
                         : colorScheme.surfaceContainerHighest,
-                    backgroundImage: isLoggedIn &&
-                            _authService.userAvatar.isNotEmpty
+                    backgroundImage:
+                        isLoggedIn && _authService.userAvatar.isNotEmpty
                         ? NetworkImage(_authService.userAvatar)
                         : null,
                     child: !isLoggedIn || _authService.userAvatar.isEmpty
@@ -333,8 +341,8 @@ class _ProfilePageState extends State<ProfilePage> {
                         Text(
                           isLoggedIn
                               ? (_authService.userEmail.isNotEmpty
-                                  ? _authService.userEmail
-                                  : '已连接 SmartTube OAuth 授权')
+                                    ? _authService.userEmail
+                                    : '已连接 SmartTube OAuth 授权')
                               : '点击右侧按钮登录同步云端数据',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -371,9 +379,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         if (result == true && mounted) {
                           setState(() {});
                           messenger.showSnackBar(
-                            const SnackBar(
-                              content: Text('登录成功！已无缝同步云端账号数据'),
-                            ),
+                            const SnackBar(content: Text('登录成功！已无缝同步云端账号数据')),
                           );
                         }
                       },
